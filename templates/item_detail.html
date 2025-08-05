@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ item.name }}</h2>
+<p>Type: {{ item.type }}</p>
+<p>Quantity: {{ item.quantity }}</p>
+<p>Container: {% if item.container %}<a href="/container/{{ item.container.code }}">{{ item.container.contents or 'Container' }}</a>{% else %}None{% endif %}</p>
+<p>Location: {% if item.location %}<a href="/location/{{ item.location.code }}">{{ item.location.room }} / {{ item.location.area }} / {{ item.location.spot }}</a>{% else %}None{% endif %}</p>
+<p><img src="{{ url_for('static', filename='qr/' + item.code + '.png') }}" alt="qr"></p>
+<p><a href="/item/{{ item.code }}/split">Split Quantity</a> | <a href="/item/{{ item.code }}/remove">Remove from Location</a></p>
+{% endblock %}

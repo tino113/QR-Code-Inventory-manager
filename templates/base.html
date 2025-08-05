@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <title>QR Inventory</title>
+</head>
+<body>
+  <nav>
+    <a href="/">Home</a> |
+    <a href="/add/item">Add Item</a> |
+    <a href="/add/container">Add Container</a> |
+    <a href="/add/location">Add Location</a>
+  </nav>
+  <hr>
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <ul>
+      {% for m in messages %}
+        <li>{{ m }}</li>
+      {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</body>
+</html>

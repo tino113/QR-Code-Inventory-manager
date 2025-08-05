@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Scan Result</h2>
+{% if message %}<p>{{ message }}</p>{% endif %}
+{% if obj.__class__.__name__ == 'Item' %}
+  <p>Item: <a href="/item/{{ obj.code }}">{{ obj.name }}</a></p>
+{% elif obj.__class__.__name__ == 'Container' %}
+  <p>Container: <a href="/container/{{ obj.code }}">{{ obj.contents or 'Container' }}</a></p>
+{% else %}
+  <p>Location: <a href="/location/{{ obj.code }}">{{ obj.room }} / {{ obj.area }} / {{ obj.spot }}</a></p>
+{% endif %}
+{% endblock %}

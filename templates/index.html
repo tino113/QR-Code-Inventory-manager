@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Items</h2>
+<ul>
+  {% for i in items %}
+    <li><a href="/item/{{ i.code }}">{{ i.name }} ({{ i.quantity }})</a></li>
+  {% endfor %}
+</ul>
+<h2>Containers</h2>
+<ul>
+  {% for c in containers %}
+    <li><a href="/container/{{ c.code }}">{{ c.contents or 'Container' }}</a></li>
+  {% endfor %}
+</ul>
+<h2>Locations</h2>
+<ul>
+  {% for l in locations %}
+    <li><a href="/location/{{ l.code }}">{{ l.room }} / {{ l.area }} / {{ l.spot }}</a></li>
+  {% endfor %}
+</ul>
+<h2>Unaccounted Items</h2>
+<ul>
+  {% for u in unaccounted %}
+    <li>{{ u.name }} ({{ u.quantity }})</li>
+  {% endfor %}
+</ul>
+{% endblock %}

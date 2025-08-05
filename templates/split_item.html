@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Split {{ item.name }}</h2>
+<form method="post">
+  Quantity to split: <input name="quantity" type="number" min="1" max="{{ item.quantity -1 }}"><br>
+  <button type="submit">Split</button>
+</form>
+{% endblock %}
