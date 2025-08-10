@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<<<<<<< HEAD
 <h2>{{ location.name }}</h2>
 {% if location.image %}
   <img src="{{ url_for('static', filename=location.image) }}" class="img-fluid mb-3" style="max-width:200px;">
@@ -33,3 +34,20 @@
 </ul>
 {% endblock %}
 
+=======
+<h2>{{ location.room }} / {{ location.area }} / {{ location.spot }}</h2>
+<p><img src="{{ url_for('static', filename='qr/' + location.code + '.png') }}" alt="qr"></p>
+<h3>Items</h3>
+<ul>
+  {% for i in location.items %}
+    <li><a href="/item/{{ i.code }}">{{ i.name }} ({{ i.quantity }})</a></li>
+  {% endfor %}
+</ul>
+<h3>Containers</h3>
+<ul>
+  {% for c in location.containers %}
+    <li><a href="/container/{{ c.code }}">{{ c.contents or 'Container' }}</a></li>
+  {% endfor %}
+</ul>
+{% endblock %}
+>>>>>>> dev

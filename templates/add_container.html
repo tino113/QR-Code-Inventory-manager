@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% block content %}
+<<<<<<< HEAD
 <h2>{{ 'Edit' if edit else 'Add' }} Container</h2>
 <form method="post" enctype="multipart/form-data">
   <div class="mb-3">
@@ -22,3 +23,13 @@
 </form>
 {% endblock %}
 
+=======
+<h2>Add Container</h2>
+<form method="post">
+  Contents: <input name="contents"><br>
+  Size: <input name="size"><br>
+  Color: <input name="color"><br>
+  <button type="submit">Add</button>
+</form>
+{% endblock %}
+>>>>>>> dev

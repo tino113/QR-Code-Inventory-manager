@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Split {{ item.name }}</h2>
+<<<<<<< HEAD
 <form method="post" enctype="multipart/form-data">
   <div class="mb-3">
     <label class="form-label">Quantity to split</label>
@@ -11,5 +12,10 @@
     <input class="form-control" type="file" name="image">
   </div>
   <button class="btn btn-primary" type="submit">Split</button>
+=======
+<form method="post">
+  Quantity to split: <input name="quantity" type="number" min="1" max="{{ item.quantity -1 }}"><br>
+  <button type="submit">Split</button>
+>>>>>>> dev
 </form>
 {% endblock %}
