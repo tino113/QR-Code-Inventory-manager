@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Scanned: {{ obj.code }}</h2>
+{% if message %}
+<p>{{ message }}</p>
+{% else %}
+<p>No pair detected yet.</p>
+{% endif %}
+{% endblock %}
+

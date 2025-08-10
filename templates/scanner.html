@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Scanner</h2>
+<div class="mb-3">
+  <label>Pair window (seconds): <span id="window-label">10</span></label>
+  <input type="range" id="window" class="form-range" min="1" max="20" value="10">
+</div>
+<div id="reader" style="width:300px;"></div>
+<div id="scan-message" class="mt-3"></div>
+<script src="https://unpkg.com/html5-qrcode@2.3.9/html5-qrcode.min.js"></script>
+<script>
+const windowSlider = document.getElementById('window');
+const windowLabel = document.getElementById('window-label');
+windowSlider.oninput = () => windowLabel.textContent = windowSlider.value;
+const html5QrCode = new Html5Qrcode('reader');
+function start(){
+  Html5Qrcode.getCameras().then(cams => {
+    if(cams.length){
+      html5QrCode.start(cams[0].id, {fps:10, qrbox:250}, onScanSuccess);
+    }
+  });
+}
+let last = null;
+function onScanSuccess(decodedText){
+  fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
+    .then(r=>r.json()).then(data=>{
+      const msg = document.getElementById('scan-message');
+      if(data.message){
+        msg.textContent = data.message;
+        last = null;
+      }else if(data.pending){
+        msg.textContent = 'First code scanned...';
+        last = {type:data.type, code:data.code};
+        setTimeout(()=>{
+          if(last && last.code === data.code){
+            window.location = `/${data.type}/${data.code}`;
+          }
+        }, windowSlider.value * 1000);
+      }
+    });
+}
+start();
+</script>
+{% endblock %}
+
