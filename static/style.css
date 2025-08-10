@@ -1,0 +1,19 @@
+body {
+  padding-bottom: 40px;
+  background-color: #121212;
+  color: #e0e0e0;
+}
+
+a { color: #9cf; }
+
+.list-group-item {
+  background-color: #222;
+  color: #eee;
+}
+
+img {
+  border: 1px solid #444;
+  padding: 4px;
+  background: #fff;
+}
+

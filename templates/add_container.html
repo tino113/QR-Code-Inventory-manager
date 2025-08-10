@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ 'Edit' if edit else 'Add' }} Container</h2>
+<form method="post" enctype="multipart/form-data">
+  <div class="mb-3">
+    <label class="form-label">Contents</label>
+    <input class="form-control" type="text" name="contents" value="{{ container.contents if edit else '' }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Size</label>
+    <input class="form-control" type="text" name="size" value="{{ container.size if edit else '' }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Color</label>
+    <input class="form-control" type="text" name="color" value="{{ container.color if edit else '' }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Image</label>
+    <input class="form-control" type="file" name="image">
+  </div>
+  <button class="btn btn-primary" type="submit">Submit</button>
+</form>
+{% endblock %}
+

@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ 'Edit' if edit else 'Add' }} Location</h2>
+<form method="post" enctype="multipart/form-data">
+  <div class="mb-3">
+    <label class="form-label">Name</label>
+    <input class="form-control" type="text" name="name" value="{{ location.name if edit else '' }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Parent</label>
+    <select class="form-select" name="parent_id">
+      <option value="">-- none --</option>
+      {% for loc in locations %}
+        <option value="{{ loc.id }}" {% if edit and location.parent_id==loc.id %}selected{% endif %}>{{ loc.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Image</label>
+    <input class="form-control" type="file" name="image">
+  </div>
+  <button class="btn btn-primary" type="submit">Submit</button>
+</form>
+{% endblock %}
+
