@@ -1,0 +1,6 @@
+flask
+sqlalchemy
+qrcode
+pillow
+pytest
+flask_sqlalchemy
