@@ -24,6 +24,7 @@ This project provides a simple inventory management system that tags items, cont
    Use `FLASK_NO_SSL=1` if you need to serve over plain HTTP. The server listens
    on `https://localhost:5000` by default. The application checks the existing
    `inventory.db` on startup and recreates it if the schema is out-of-date.
+   The scanner uses a bundled QR decoder and does not rely on external CDNs.
 
 ## Usage
 

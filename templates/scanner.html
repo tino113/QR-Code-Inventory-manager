@@ -8,18 +8,21 @@
 <p>Please allow camera access when prompted.</p>
 <button id="start-btn" class="btn btn-primary mb-3">Start Camera</button>
 <select id="camera-select" class="form-select mb-3" style="display:none;"></select>
-<div id="reader" style="width:100%;max-width:400px;"></div>
+<video id="video" style="width:100%;max-width:400px;" autoplay muted playsinline></video>
+<canvas id="canvas" style="display:none;"></canvas>
 <div id="scan-message" class="mt-3"></div>
 <ul id="scan-log" class="list-group mt-3"></ul>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" integrity="sha512-zEPNRM+cO3HcCm4l+zvNAhSWZ02sY1pbgr4o78rksSA3w8EMXRlm6bkQoAjMYu9c1tbk1IMwklD1du4ylXmqWA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{{ url_for('static', filename='js/jsqr.js') }}"></script>
 <script>
 const windowSlider = document.getElementById('window');
 const windowLabel = document.getElementById('window-label');
 windowSlider.oninput = () => windowLabel.textContent = windowSlider.value;
-const html5QrCode = new Html5Qrcode('reader');
 const logList = document.getElementById('scan-log');
 const cameraSelect = document.getElementById('camera-select');
 const startBtn = document.getElementById('start-btn');
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
 // keep a simple array in case we want to inspect the log programmatically
 const scanLog = [];
@@ -39,9 +42,20 @@ function beep(){
   setTimeout(()=>osc.stop(),150);
 }
 
-function start(camera){
-  html5QrCode.start(camera, {fps:10, qrbox:250}, onScanSuccess)
-    .catch(err => { console.error(err); });
+let stream = null;
+
+async function startStream(deviceId){
+  if(stream){
+    stream.getTracks().forEach(t=>t.stop());
+  }
+  const constraints = {
+    video: deviceId ? {deviceId:{exact:deviceId}} : {facingMode:{ideal:'environment'}},
+    audio:false
+  };
+  stream = await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject = stream;
+  await video.play();
+  requestAnimationFrame(tick);
 }
 
 async function initCameras(){
@@ -56,29 +70,21 @@ async function initCameras(){
     return;
   }
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
-    stream.getTracks().forEach(t => t.stop());
-    try{
-      const cameras = await Html5Qrcode.getCameras();
-      if(cameras.length){
-        cameras.forEach((cam, idx) => {
-          const opt = document.createElement('option');
-          opt.value = cam.id;
-          opt.text = cam.label || `Camera ${idx+1}`;
-          cameraSelect.appendChild(opt);
-        });
-        cameraSelect.style.display = cameras.length > 1 ? 'block' : 'none';
-        let preferred = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
-        cameraSelect.value = preferred.id;
-        start(preferred.id);
-      }else{
-        cameraSelect.style.display = 'none';
-        start({facingMode:{exact:'environment'}});
-      }
-    }catch(e){
-      cameraSelect.style.display = 'none';
-      start({facingMode:{exact:'environment'}});
-    }
+    const temp = await navigator.mediaDevices.getUserMedia({video:true});
+    temp.getTracks().forEach(t=>t.stop());
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter(d=>d.kind === 'videoinput');
+    cameraSelect.innerHTML = '';
+    cams.forEach((cam, idx)=>{
+      const opt = document.createElement('option');
+      opt.value = cam.deviceId;
+      opt.text = cam.label || `Camera ${idx+1}`;
+      cameraSelect.appendChild(opt);
+    });
+    cameraSelect.style.display = cams.length > 1 ? 'block' : 'none';
+    const preferred = cams.find(c => /back|rear|environment/i.test(c.label)) || cams[0];
+    cameraSelect.value = preferred.deviceId;
+    await startStream(preferred.deviceId);
   }catch(err){
     console.error('Camera initialization failed', err);
     msg.textContent = 'Unable to access camera.';
@@ -86,14 +92,14 @@ async function initCameras(){
 }
 
 cameraSelect.addEventListener('change', () => {
-  html5QrCode.stop().then(()=> start(cameraSelect.value));
+  startStream(cameraSelect.value);
 });
 
 // debounce only repeats of the same code within one second
 let lastScan = { code: null, time: 0 };
 let last = null;
 
-function onScanSuccess(decodedText){
+function handleScan(decodedText){
   const now = Date.now();
   if(lastScan.code === decodedText && (now - lastScan.time) < 1000){
     return; // ignore rapid repeat of the same code
@@ -123,6 +129,20 @@ function onScanSuccess(decodedText){
         msg.textContent = data.error;
       }
     });
+}
+
+function tick(){
+  if(video.readyState === video.HAVE_ENOUGH_DATA){
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    if(code){
+      handleScan(code.data);
+    }
+  }
+  requestAnimationFrame(tick);
 }
 
 startBtn.addEventListener('click', initCameras);
