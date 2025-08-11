@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Account</h2>
+<form method="post" enctype="multipart/form-data" class="mb-3">
+  <div class="mb-3">
+    <label class="form-label">Username</label>
+    <input class="form-control" type="text" name="username" value="{{ user.username }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">New Password</label>
+    <input class="form-control" type="password" name="password">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Profile Image</label>
+    <input class="form-control" type="file" name="image">
+  </div>
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+{% if user.image %}
+  <img src="{{ url_for('static', filename=user.image) }}" class="img-fluid qr-img mx-auto d-block">
+{% endif %}
+{% endblock %}

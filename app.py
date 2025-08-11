@@ -32,6 +32,7 @@ class User(db.Model):
     username = db.Column(db.String, unique=True, nullable=False)
     password_hash = db.Column(db.String, nullable=False)
     must_change = db.Column(db.Boolean, default=False)
+    image = db.Column(db.String)
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -47,6 +48,10 @@ class Location(db.Model, TimestampMixin):
     parent_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     parent = db.relationship('Location', remote_side=[id], backref='children')
     image = db.Column(db.String)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
+    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
 
     items = db.relationship('Item', backref='location', lazy=True)
     containers = db.relationship('Container', backref='location', lazy=True)
@@ -66,6 +71,10 @@ class Container(db.Model, TimestampMixin):
     color = db.Column(db.String)
     image = db.Column(db.String)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
+    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
     items = db.relationship('Item', backref='container', lazy=True)
     histories = db.relationship('History', backref='container', lazy=True)
 
@@ -80,6 +89,10 @@ class Item(db.Model, TimestampMixin):
     missing = db.Column(db.Boolean, default=False)
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    created_by = db.relationship('User', foreign_keys=[created_by_id])
+    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
     histories = db.relationship('History', backref='item', lazy=True)
 
 
@@ -152,7 +165,7 @@ def save_image(file, code: str):
     if file and file.filename:
         ext = os.path.splitext(file.filename)[1]
         filename = secure_filename(f"{code}{ext}")
-        rel_path = os.path.join('uploads', filename)
+        rel_path = os.path.join('uploads', filename).replace('\\', '/')
         file.save(os.path.join('static', rel_path))
         return rel_path
     return None
@@ -257,9 +270,29 @@ def change_password():
     return render_template('change_password.html')
 
 
-@app.route('/admin/log')
-def admin_log():
-    logs = History.query.order_by(History.timestamp.desc()).all()
+@app.route('/account', methods=['GET', 'POST'])
+def account():
+    user = current_user()
+    if request.method == 'POST':
+        user.username = request.form['username']
+        if request.form.get('password'):
+            user.set_password(request.form['password'])
+        img = save_image(request.files.get('image'), f'user_{user.id}')
+        if img:
+            user.image = img
+        db.session.commit()
+        flash('Account updated')
+        log_action('updated account')
+    return render_template('account.html', user=user)
+
+
+@app.route('/logs')
+def logs():
+    user = current_user()
+    q = History.query.order_by(History.timestamp.desc())
+    if user.username != 'admin':
+        q = q.filter_by(user_id=user.id)
+    logs = q.all()
     return render_template('admin_log.html', logs=logs)
 
 
@@ -289,7 +322,8 @@ def add_item():
         quantity = int(request.form['quantity'])
         code = generate_code('IT')
         img = save_image(request.files.get('image'), code)
-        item = Item(name=name, type=type_, quantity=quantity, code=code, image=img)
+        item = Item(name=name, type=type_, quantity=quantity, code=code, image=img,
+                    created_by=current_user(), updated_by=current_user())
         db.session.add(item)
         db.session.commit()
         generate_qr(code)
@@ -307,7 +341,8 @@ def add_container():
         code = generate_code('CT')
         img = save_image(request.files.get('image'), code)
         container = Container(contents=contents, size=size, color=color,
-                              code=code, image=img)
+                              code=code, image=img,
+                              created_by=current_user(), updated_by=current_user())
         db.session.add(container)
         db.session.commit()
         generate_qr(code)
@@ -324,7 +359,8 @@ def add_location():
         parent_id = request.form.get('parent_id') or None
         code = generate_code('LC')
         img = save_image(request.files.get('image'), code)
-        location = Location(name=name, parent_id=parent_id, code=code, image=img)
+        location = Location(name=name, parent_id=parent_id, code=code, image=img,
+                             created_by=current_user(), updated_by=current_user())
         db.session.add(location)
         db.session.commit()
         generate_qr(code)
@@ -343,6 +379,7 @@ def edit_item(code):
         img = save_image(request.files.get('image'), item.code)
         if img:
             item.image = img
+        item.updated_by = current_user()
         db.session.commit()
         log_action('edited item', item=item)
         return redirect(url_for('item_detail', code=code))
@@ -368,6 +405,7 @@ def edit_container(code):
         img = save_image(request.files.get('image'), container.code)
         if img:
             container.image = img
+        container.updated_by = current_user()
         db.session.commit()
         log_action('edited container', container=container)
         return redirect(url_for('container_detail', code=code))
@@ -394,6 +432,7 @@ def edit_location(code):
         img = save_image(request.files.get('image'), location.code)
         if img:
             location.image = img
+        location.updated_by = current_user()
         db.session.commit()
         log_action('edited location', location=location)
         return redirect(url_for('location_detail', code=code))
@@ -457,21 +496,25 @@ def process_pair(first_code: str, second_code: str) -> str:
     if isinstance(first, Item) and isinstance(second, Container):
         first.container = second
         first.location = None
+        first.updated_by = current_user()
         db.session.commit()
         log_action('item to container', item=first, container=second)
         return f'Item {first.name} added to container.'
     if isinstance(first, Item) and isinstance(second, Location):
         first.location = second
         first.container = None
+        first.updated_by = current_user()
         db.session.commit()
         log_action('item to location', item=first, location=second)
         return f'Item {first.name} moved to location.'
     if isinstance(first, Container) and isinstance(second, Location):
         first.location = second
+        first.updated_by = current_user()
         db.session.commit()
         log_action('container to location', container=first, location=second)
         for it in first.items:
             it.location = second
+            it.updated_by = current_user()
             db.session.add(History(item=it, location=second,
                                    user=current_user(), action='item to location'))
         db.session.commit()
@@ -486,10 +529,12 @@ def split_item(code):
         qty = int(request.form['quantity'])
         if 0 < qty < item.quantity:
             item.quantity -= qty
+            item.updated_by = current_user()
             new_code = generate_code('IT')
             img = save_image(request.files.get('image'), new_code)
             new_item = Item(name=item.name, type=item.type, quantity=qty,
-                            code=new_code, image=img)
+                            code=new_code, image=img,
+                            created_by=current_user(), updated_by=current_user())
             db.session.add(new_item)
             db.session.add(History(item=item, action='split', user=current_user()))
             db.session.add(History(item=new_item, action='split from',
@@ -505,6 +550,7 @@ def remove_item_location(code):
     item = Item.query.filter_by(code=code).first_or_404()
     item.location = None
     item.container = None
+    item.updated_by = current_user()
     db.session.add(History(item=item, action='removed from location',
                            user=current_user()))
     db.session.commit()
@@ -515,6 +561,7 @@ def remove_item_location(code):
 def report_missing(code):
     item = Item.query.filter_by(code=code).first_or_404()
     item.missing = True
+    item.updated_by = current_user()
     db.session.commit()
     log_action('reported missing', item=item)
     return redirect(url_for('item_detail', code=code))

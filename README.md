@@ -30,6 +30,8 @@ This project provides a simple inventory management system that tags items, cont
 - Use the interface to create items, containers and locations. A QR code is generated for each.
 - Visit `/scanner` to use the browser camera for scanning. Scanning two codes within the configured window will pair them accordingly.
 - Items may be split into sub-quantities or marked as missing. Unaccounted items are listed on the home page.
+- Toggle light and dark themes using the moon/sun icon in the navigation bar.
+- Use the account settings (gear icon) to update your username, password or profile image. A log of your actions is available via the *Logs* link (admins see all activity).
 
 ## Testing
 

@@ -2,18 +2,20 @@
 {% block content %}
 <h2>Container {{ container.code }}</h2>
 {% if container.image %}
-  <img src="{{ url_for('static', filename=container.image) }}" class="img-fluid mb-3" style="max-width:200px;">
+  <img src="{{ url_for('static', filename=container.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
 {% endif %}
-<img src="{{ url_for('static', filename='qr/' + container.code + '.png') }}" class="mb-3" style="max-width:200px;">
-<ul>
+<img src="{{ url_for('static', filename='qr/' + container.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
+<ul class="list-group mb-3">
   <li>Contents: {{ container.contents }}</li>
   <li>Size: {{ container.size }}</li>
   <li>Color: {{ container.color }}</li>
-  <li>Created: {{ container.created_at }}</li>
-  <li>Updated: {{ container.updated_at }}</li>
+  <li>Created: {{ container.created_at }} by {{ container.created_by.username if container.created_by else 'n/a' }}</li>
+  <li>Updated: {{ container.updated_at }} by {{ container.updated_by.username if container.updated_by else 'n/a' }}</li>
 </ul>
-<a class="btn btn-info" href="/container/{{ container.code }}/edit">Edit</a>
-<a class="btn btn-danger" href="/container/{{ container.code }}/delete" onclick="return confirm('Delete container?');">Delete</a>
+<div class="buttons-vertical">
+  <a class="btn btn-info" href="/container/{{ container.code }}/edit">Edit</a>
+  <a class="btn btn-danger" href="/container/{{ container.code }}/delete" onclick="return confirm('Delete container?');">Delete</a>
+</div>
 {% if container.location %}
 <p>Location: <a href="/location/{{ container.location.code }}">{{ container.location.name }}</a></p>
 {% endif %}

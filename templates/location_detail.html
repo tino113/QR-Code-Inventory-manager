@@ -2,16 +2,18 @@
 {% block content %}
 <h2>{{ location.name }}</h2>
 {% if location.image %}
-  <img src="{{ url_for('static', filename=location.image) }}" class="img-fluid mb-3" style="max-width:200px;">
+  <img src="{{ url_for('static', filename=location.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
 {% endif %}
-<img src="{{ url_for('static', filename='qr/' + location.code + '.png') }}" class="mb-3" style="max-width:200px;">
-<ul>
+<img src="{{ url_for('static', filename='qr/' + location.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
+<ul class="list-group mb-3">
   <li>Code: {{ location.code }}</li>
-  <li>Created: {{ location.created_at }}</li>
-  <li>Updated: {{ location.updated_at }}</li>
+  <li>Created: {{ location.created_at }} by {{ location.created_by.username if location.created_by else 'n/a' }}</li>
+  <li>Updated: {{ location.updated_at }} by {{ location.updated_by.username if location.updated_by else 'n/a' }}</li>
 </ul>
-<a class="btn btn-info" href="/location/{{ location.code }}/edit">Edit</a>
-<a class="btn btn-danger" href="/location/{{ location.code }}/delete" onclick="return confirm('Delete location?');">Delete</a>
+<div class="buttons-vertical">
+  <a class="btn btn-info" href="/location/{{ location.code }}/edit">Edit</a>
+  <a class="btn btn-danger" href="/location/{{ location.code }}/delete" onclick="return confirm('Delete location?');">Delete</a>
+</div>
 {% if location.parent %}
 <p>Parent: <a href="/location/{{ location.parent.code }}">{{ location.parent.name }}</a></p>
 {% endif %}

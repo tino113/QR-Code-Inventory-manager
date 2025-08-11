@@ -33,7 +33,7 @@
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for item in items %}
-          <li class="list-group-item bg-dark text-light"><span title="item">📄</span> <a class="text-info" href="/item/{{ item.code }}">{{ item.name }}</a></li>
+          <li class="list-group-item"><span title="item">📄</span> <a href="/item/{{ item.code }}">{{ item.name }}</a></li>
         {% endfor %}
         </ul>
       </div>
@@ -47,7 +47,7 @@
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for c in containers %}
-          <li class="list-group-item bg-dark text-light"><span title="container">📦</span> <a class="text-info" href="/container/{{ c.code }}">{{ c.contents or c.code }}</a></li>
+          <li class="list-group-item"><span title="container">📦</span> <a href="/container/{{ c.code }}">{{ c.contents or c.code }}</a></li>
         {% endfor %}
         </ul>
       </div>
@@ -61,7 +61,7 @@
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for l in locations %}
-          <li class="list-group-item bg-dark text-light"><span title="location">📍</span> <a class="text-info" href="/location/{{ l.code }}">{{ l.full_path() }}</a></li>
+          <li class="list-group-item"><span title="location">📍</span> <a href="/location/{{ l.code }}">{{ l.full_path() }}</a></li>
         {% endfor %}
         </ul>
       </div>
