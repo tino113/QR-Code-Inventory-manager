@@ -135,6 +135,11 @@ def ensure_admin():
 def setup_database():
     try:
         db.create_all()
+        # issue simple selects to ensure all tables match the models;
+        # missing columns will raise an OperationalError which triggers
+        # a full rebuild of the schema
+        for model in (User, Location, Container, Item, History):
+            db.session.query(model).first()
         ensure_admin()
     except Exception:
         db.drop_all()

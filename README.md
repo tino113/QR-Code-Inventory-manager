@@ -21,7 +21,9 @@ This project provides a simple inventory management system that tags items, cont
    ```bash
    python app.py
    ```
-   The server starts on `http://localhost:5000`.
+   The server starts on `http://localhost:5000`. The application checks the
+   existing `inventory.db` on startup and recreates it if the schema is
+   out-of-date.
 
 ## Usage
 
