@@ -10,7 +10,7 @@
 <div id="reader" style="width:100%;max-width:400px;"></div>
 <div id="scan-message" class="mt-3"></div>
 <ul id="scan-log" class="list-group mt-3"></ul>
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" integrity="sha512-zEPNRM+cO3HcCm4l+zvNAhSWZ02sY1pbgr4o78rksSA3w8EMXRlm6bkQoAjMYu9c1tbk1IMwklD1du4ylXmqWA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 const windowSlider = document.getElementById('window');
 const windowLabel = document.getElementById('window-label');
@@ -44,30 +44,39 @@ function start(camera){
 
 async function initCameras(){
   const msg = document.getElementById('scan-message');
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+  if(!window.isSecureContext && location.hostname !== 'localhost'){
     msg.textContent = 'Camera access requires HTTPS or localhost.';
     return;
   }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    msg.textContent = 'Camera API not available.';
+    return;
+  }
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
     stream.getTracks().forEach(t => t.stop());
-    const cameras = await Html5Qrcode.getCameras();
-    if(cameras.length){
-      cameras.forEach((cam, idx) => {
-        const opt = document.createElement('option');
-        opt.value = cam.id;
-        opt.text = cam.label || `Camera ${idx+1}`;
-        cameraSelect.appendChild(opt);
-      });
-      if(cameras.length <= 1){
+    try{
+      const cameras = await Html5Qrcode.getCameras();
+      if(cameras.length){
+        cameras.forEach((cam, idx) => {
+          const opt = document.createElement('option');
+          opt.value = cam.id;
+          opt.text = cam.label || `Camera ${idx+1}`;
+          cameraSelect.appendChild(opt);
+        });
+        if(cameras.length <= 1){
+          cameraSelect.style.display = 'none';
+        }
+        let preferred = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
+        cameraSelect.value = preferred.id;
+        start(preferred.id);
+      }else{
         cameraSelect.style.display = 'none';
+        start({facingMode:{exact:'environment'}});
       }
-      let preferred = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
-      cameraSelect.value = preferred.id;
-      start(preferred.id);
-    }else{
+    }catch(e){
       cameraSelect.style.display = 'none';
-      start({facingMode:'environment'});
+      start({facingMode:{exact:'environment'}});
     }
   }catch(err){
     console.error('Camera initialization failed', err);

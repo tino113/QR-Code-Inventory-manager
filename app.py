@@ -148,6 +148,7 @@ class History(db.Model):
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     action = db.Column(db.String)
+    description = db.Column(db.Text)
     user = db.relationship('User', backref='histories')
 
 
@@ -220,9 +221,18 @@ def save_image(file, code: str):
     return None
 
 
-def log_action(action, item=None, container=None, location=None):
-    h = History(action=action, item=item, container=container,
-                location=location, user=current_user())
+def log_action(action, item=None, container=None, location=None, description=None):
+    if description is None:
+        if action == 'item to container' and item and container:
+            description = f'Item <b>{item.name}</b> was moved to <b>{container.name}</b>'
+        elif action == 'item to location' and item and location:
+            description = f'Item <b>{item.name}</b> was moved to <b>{location.name}</b>'
+        elif action == 'container to location' and container and location:
+            description = f'Container <b>{container.name}</b> was moved to <b>{location.name}</b>'
+        else:
+            description = action
+    h = History(action=action, description=description, item=item,
+                container=container, location=location, user=current_user())
     db.session.add(h)
     db.session.commit()
 
@@ -341,10 +351,45 @@ def account():
 @app.route('/logs')
 def logs():
     user = current_user()
-    q = History.query.order_by(History.timestamp.desc())
+    q = History.query.outerjoin(Item).outerjoin(Container).outerjoin(Location)
     if user.username != 'admin':
-        q = q.filter_by(user_id=user.id)
-    logs = q.all()
+        q = q.filter(History.user_id == user.id)
+
+    start = request.args.get('start')
+    end = request.args.get('end')
+    period = request.args.get('period')
+    action = request.args.get('action')
+    search = request.args.get('q')
+
+    if period:
+        now = dt.datetime.utcnow()
+        if period == 'day':
+            start = (now - dt.timedelta(days=1)).date().isoformat()
+        elif period == 'week':
+            start = (now - dt.timedelta(weeks=1)).date().isoformat()
+        elif period == 'month':
+            start = (now - dt.timedelta(days=30)).date().isoformat()
+
+    if start:
+        try:
+            q = q.filter(History.timestamp >= dt.datetime.fromisoformat(start))
+        except ValueError:
+            pass
+    if end:
+        try:
+            q = q.filter(History.timestamp <= dt.datetime.fromisoformat(end))
+        except ValueError:
+            pass
+    if action:
+        q = q.filter(History.action.contains(action))
+    if search:
+        q = q.filter(db.or_(History.description.contains(search),
+                             Item.name.contains(search),
+                             Item.type.contains(search),
+                             Container.name.contains(search),
+                             Location.name.contains(search)))
+
+    logs = q.order_by(History.timestamp.desc()).all()
     return render_template('admin_log.html', logs=logs)
 
 
@@ -561,27 +606,31 @@ def process_pair(first_code: str, second_code: str) -> str:
         first.location = None
         first.updated_by = current_user()
         db.session.commit()
-        log_action('item to container', item=first, container=second)
-        return f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
+        msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
+        log_action('item to container', item=first, container=second, description=msg)
+        return msg
     if isinstance(first, Item) and isinstance(second, Location):
         first.location = second
         first.container = None
         first.updated_by = current_user()
         db.session.commit()
-        log_action('item to location', item=first, location=second)
-        return f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
+        msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
+        log_action('item to location', item=first, location=second, description=msg)
+        return msg
     if isinstance(first, Container) and isinstance(second, Location):
         first.location = second
         first.updated_by = current_user()
         db.session.commit()
-        log_action('container to location', container=first, location=second)
+        msg = f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
+        log_action('container to location', container=first, location=second, description=msg)
         for it in first.items:
             it.location = second
             it.updated_by = current_user()
             db.session.add(History(item=it, location=second,
-                                   user=current_user(), action='item to location'))
+                                   user=current_user(), action='item to location',
+                                   description=f'Item <b>{it.name}</b> was moved to <b>{second.name}</b>'))
         db.session.commit()
-        return f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
+        return msg
     return 'No action for scanned pair.'
 
 
@@ -673,5 +722,6 @@ def scanner():
 if __name__ == '__main__':
     with app.app_context():
         setup_database()
-    app.run(host='0.0.0.0', port=5000)
+    ssl = 'adhoc' if os.environ.get('FLASK_SSL') == '1' else None
+    app.run(host='0.0.0.0', port=5000, ssl_context=ssl)
 
