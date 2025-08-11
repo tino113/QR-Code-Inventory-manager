@@ -165,6 +165,14 @@ def inject_user():
 
 
 @app.before_request
+def enforce_https():
+    if (not request.is_secure and
+            request.host.split(':')[0] not in ('localhost', '127.0.0.1')):
+        url = request.url.replace('http://', 'https://', 1)
+        return redirect(url)
+
+
+@app.before_request
 def require_login():
     allowed = {'login', 'register', 'static', 'change_password'}
     if request.endpoint not in allowed and not current_user():
@@ -722,6 +730,6 @@ def scanner():
 if __name__ == '__main__':
     with app.app_context():
         setup_database()
-    ssl = 'adhoc' if os.environ.get('FLASK_SSL') == '1' else None
+    ssl = None if os.environ.get('FLASK_NO_SSL') == '1' else 'adhoc'
     app.run(host='0.0.0.0', port=5000, ssl_context=ssl)
 
