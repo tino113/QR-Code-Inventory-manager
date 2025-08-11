@@ -149,8 +149,10 @@ def test_add_relation():
     with app.app_context():
         from app import Relation
         item = Item.query.filter_by(code=item_code).first()
+        loc = Location.query.filter_by(code=loc_code).first()
         rel = Relation.query.filter_by(first_type='item', first_id=item.id, second_type='location').first()
         assert rel is not None
+        assert item.location_id == loc.id
 
 
 def test_location_unique_items():

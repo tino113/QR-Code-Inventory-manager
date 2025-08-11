@@ -950,6 +950,8 @@ def add_relation(etype, code):
     locations = Location.query.all()
     if request.method == 'POST':
         tcode = request.form['code']
+        # perform the same pairing logic as manual registration
+        message = process_pair(code, tcode)
         target = (Item.query.filter_by(code=tcode).first() or
                   Container.query.filter_by(code=tcode).first() or
                   Location.query.filter_by(code=tcode).first())
@@ -964,8 +966,9 @@ def add_relation(etype, code):
                            second_type=ttype, second_id=target.id)
             db.session.add(rel)
             db.session.commit()
-            flash('Relation added', 'info')
-            return redirect(url_for(f'{etype}_detail', code=code))
+        if message:
+            flash(Markup(message), 'info')
+        return redirect(url_for(f'{etype}_detail', code=code))
     return render_template('add_relation.html', etype=etype, obj=obj,
                            items=items, containers=containers, locations=locations)
 
