@@ -672,5 +672,5 @@ def scanner():
 if __name__ == '__main__':
     with app.app_context():
         setup_database()
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, ssl_context='adhoc')
 

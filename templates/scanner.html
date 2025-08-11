@@ -42,24 +42,32 @@ function start(cameraId){
     .catch(err => { console.error(err); });
 }
 
-function initCameras(){
-  navigator.mediaDevices.getUserMedia({video:true}).then(stream => {
+async function initCameras(){
+  const msg = document.getElementById('scan-message');
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    msg.textContent = 'Camera access requires HTTPS or localhost.';
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:true});
     stream.getTracks().forEach(t => t.stop());
-    Html5Qrcode.getCameras().then(cameras => {
-      cameras.forEach((cam, idx) => {
-        const opt = document.createElement('option');
-        opt.value = cam.id;
-        opt.text = cam.label || `Camera ${idx+1}`;
-        cameraSelect.appendChild(opt);
-      });
-      if(cameras.length <= 1){
-        cameraSelect.style.display = 'none';
-      }
-      if(cameras[0]){
-        start(cameras[0].id);
-      }
-    }).catch(err => console.error(err));
-  }).catch(err => console.error('Camera permission denied', err));
+    const cameras = await Html5Qrcode.getCameras();
+    cameras.forEach((cam, idx) => {
+      const opt = document.createElement('option');
+      opt.value = cam.id;
+      opt.text = cam.label || `Camera ${idx+1}`;
+      cameraSelect.appendChild(opt);
+    });
+    if(cameras.length <= 1){
+      cameraSelect.style.display = 'none';
+    }
+    if(cameras[0]){
+      start(cameras[0].id);
+    }
+  }catch(err){
+    console.error('Camera initialization failed', err);
+    msg.textContent = 'Unable to access camera.';
+  }
 }
 
 cameraSelect.addEventListener('change', () => {

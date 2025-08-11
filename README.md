@@ -21,9 +21,10 @@ This project provides a simple inventory management system that tags items, cont
    ```bash
    python app.py
    ```
-   The server starts on `http://localhost:5000`. The application checks the
-   existing `inventory.db` on startup and recreates it if the schema is
-   out-of-date.
+   The server starts on `https://localhost:5000` (a self-signed certificate is
+   generated automatically; accept the warning in the browser). The application
+   checks the existing `inventory.db` on startup and recreates it if the schema
+   is out-of-date.
 
 ## Usage
 
@@ -43,7 +44,7 @@ Running `pytest -q` executes unit tests that cover item creation, splitting, sca
 
 ### Manual QR scanner testing
 
-1. Start the development server with `python app.py` and navigate to `http://localhost:5000/scanner` on a desktop or mobile browser.
+1. Start the development server with `python app.py` and navigate to `https://localhost:5000/scanner` (or replace `localhost` with the host's IP) on a desktop or mobile browser. Accept the certificate warning if prompted.
 2. Allow the browser to access the camera. If multiple cameras are available,
    choose one from the dropdown. A live viewfinder should appear.
 3. Scan a QR code. A short beep plays and the code is added to the on-page log with a timestamp.
