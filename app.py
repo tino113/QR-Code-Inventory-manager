@@ -9,7 +9,7 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import qrcode
-import subprocess
+import glob
 
 
 app = Flask(__name__)
@@ -499,30 +499,18 @@ def admin_ssl():
         key = request.files.get('key')
         os.makedirs('ssl', exist_ok=True)
         if cert and cert.filename:
-            cert.save(os.path.join('ssl', 'cert.pem'))
+            cext = os.path.splitext(cert.filename)[1] or '.pem'
+            for f in glob.glob(os.path.join('ssl', 'cert.*')):
+                os.remove(f)
+            cert.save(os.path.join('ssl', f'cert{cext}'))
         if key and key.filename:
-            key.save(os.path.join('ssl', 'key.pem'))
+            kext = os.path.splitext(key.filename)[1] or '.pem'
+            for f in glob.glob(os.path.join('ssl', 'key.*')):
+                os.remove(f)
+            key.save(os.path.join('ssl', f'key{kext}'))
         flash('SSL files uploaded. Configure your server accordingly.', 'info')
         return redirect(url_for('admin_ssl'))
     return render_template('admin_ssl.html')
-
-
-@app.route('/admin/ssl/generate', methods=['POST'])
-def admin_ssl_generate():
-    user = current_user()
-    if not user or user.username != 'admin':
-        abort(403)
-    domain = request.form['domain']
-    email = request.form['email']
-    try:
-        subprocess.run([
-            'certbot', 'certonly', '--standalone', '-d', domain,
-            '-m', email, '--agree-tos', '--non-interactive'
-        ], check=True)
-        flash('Certificate generated. Configure your server to use it.', 'info')
-    except Exception as e:
-        flash(f'Error generating certificate: {e}', 'danger')
-    return redirect(url_for('admin_ssl'))
 
 
 @app.route('/item/<code>')
@@ -932,6 +920,13 @@ def scanner():
 if __name__ == '__main__':
     with app.app_context():
         setup_database()
-    ssl = None if os.environ.get('FLASK_NO_SSL') == '1' else 'adhoc'
+    ssl = None
+    if os.environ.get('FLASK_NO_SSL') != '1':
+        cert_files = glob.glob(os.path.join('ssl', 'cert.*'))
+        key_files = glob.glob(os.path.join('ssl', 'key.*'))
+        if cert_files and key_files:
+            ssl = (cert_files[0], key_files[0])
+        else:
+            ssl = 'adhoc'
     app.run(host='0.0.0.0', port=5000, ssl_context=ssl)
 
