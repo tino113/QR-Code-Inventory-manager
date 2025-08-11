@@ -23,17 +23,37 @@
   <li><a href="/location/{{ child.code }}">{{ child.full_path() }}</a></li>
 {% endfor %}
 </ul>
-<h4>Containers</h4>
-<ul>
-{% for c in location.containers %}
-  <li><a href="/container/{{ c.code }}">{{ c.name or c.code }}</a></li>
-{% endfor %}
-</ul>
-<h4>Items</h4>
-<ul>
-{% for i in location.items %}
-  <li><a href="/item/{{ i.code }}">{{ i.name }}</a></li>
-{% endfor %}
-</ul>
+<div class="accordion" id="locAcc">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingContainers">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContainers">Containers</button>
+    </h2>
+    <div id="collapseContainers" class="accordion-collapse collapse">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for c in location.all_containers() %}
+          {% set rel = c.path_from(location) %}
+          <li class="list-group-item"><a href="/container/{{ c.code }}">{{ c.name or c.code }}{% if rel %} / {{ rel }}{% endif %}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingItems">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
+    </h2>
+    <div id="collapseItems" class="accordion-collapse collapse">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for i in location.all_items() %}
+          {% set rel = i.path_from(location) %}
+          <li class="list-group-item"><a href="/item/{{ i.code }}">{{ i.name }} ({{ i.quantity }}){% if rel %} / {{ rel }}{% endif %}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 

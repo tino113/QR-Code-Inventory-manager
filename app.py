@@ -63,6 +63,20 @@ class Location(db.Model, TimestampMixin):
             return f"{self.parent.full_path()} / {self.name}"
         return self.name
 
+    def all_items(self):
+        items = list(self.items)
+        for c in self.containers:
+            items.extend(c.items)
+        for child in self.children:
+            items.extend(child.all_items())
+        return items
+
+    def all_containers(self):
+        conts = list(self.containers)
+        for child in self.children:
+            conts.extend(child.all_containers())
+        return conts
+
 
 class Container(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
@@ -78,6 +92,14 @@ class Container(db.Model, TimestampMixin):
     updated_by = db.relationship('User', foreign_keys=[updated_by_id])
     items = db.relationship('Item', backref='container', lazy=True)
     histories = db.relationship('History', backref='container', lazy=True)
+
+    def path_from(self, loc):
+        parts = []
+        cur = self.location
+        while cur and cur != loc:
+            parts.append(cur.name)
+            cur = cur.parent
+        return ' / '.join(parts)
 
 
 class Item(db.Model, TimestampMixin):
@@ -95,6 +117,27 @@ class Item(db.Model, TimestampMixin):
     created_by = db.relationship('User', foreign_keys=[created_by_id])
     updated_by = db.relationship('User', foreign_keys=[updated_by_id])
     histories = db.relationship('History', backref='item', lazy=True)
+
+    def hierarchy(self):
+        parts = []
+        if self.container:
+            parts.append(self.container.name or self.container.code)
+        if self.location:
+            parts.append(self.location.full_path())
+        return ' / '.join(parts)
+
+    def path_from(self, loc):
+        parts = []
+        container = self.container
+        if container:
+            parts.append(container.name or container.code)
+            cur = container.location
+        else:
+            cur = self.location
+        while cur and cur != loc:
+            parts.append(cur.name)
+            cur = cur.parent
+        return ' / '.join(parts)
 
 
 class History(db.Model):
@@ -597,6 +640,28 @@ def report_missing(code):
     db.session.commit()
     log_action('reported missing', item=item)
     return redirect(url_for('item_detail', code=code))
+
+
+@app.route('/item/<code>/regen', methods=['POST'])
+def regenerate_code(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    new_code = generate_code('IT')
+    if item.image:
+        ext = os.path.splitext(item.image)[1]
+        old_path = os.path.join('static', item.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        item.image = new_rel
+    old_qr = qr_path(item.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    item.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('regenerated code', item=item)
+    return redirect(url_for('item_detail', code=new_code))
 
 
 @app.route('/scanner')
