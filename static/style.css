@@ -30,6 +30,14 @@ body.dark .alert {
   border-color: #555;
 }
 
+body.dark .table,
+body.dark .table th,
+body.dark .table td {
+  background-color: #222;
+  color: #eee;
+  border-color: #555;
+}
+
 body.dark ::placeholder {
   color: #bbb;
 }
