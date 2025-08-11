@@ -112,14 +112,25 @@ def require_login():
     if request.endpoint not in allowed and not current_user():
         return redirect(url_for('login'))
 
-
-with app.app_context():
-    db.create_all()
+def ensure_admin():
     if not User.query.filter_by(username='admin').first():
         admin = User(username='admin', must_change=True)
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
+
+def setup_database():
+    try:
+        db.create_all()
+        ensure_admin()
+    except Exception:
+        db.drop_all()
+        db.create_all()
+        ensure_admin()
+
+
+with app.app_context():
+    setup_database()
 
 
 def generate_code(prefix: str) -> str:
@@ -516,6 +527,6 @@ def scanner():
 
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
+        setup_database()
     app.run(host='0.0.0.0', port=5000)
 
