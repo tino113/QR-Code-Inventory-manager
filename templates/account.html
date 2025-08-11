@@ -11,8 +11,12 @@
     <input class="form-control" type="password" name="password">
   </div>
   <div class="mb-3">
-    <label class="form-label">Theme Colour</label>
-    <input class="form-control form-control-color" type="color" name="theme_color" value="{{ user.theme_color or '#ffeb3b' }}">
+    <label class="form-label">Light Theme Accent</label>
+    <input class="form-control form-control-color" type="color" name="theme_light" value="{{ user.theme_light or '#ffeb3b' }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Dark Theme Accent</label>
+    <input class="form-control form-control-color" type="color" name="theme_dark" value="{{ user.theme_dark or '#ffeb3b' }}">
   </div>
   <div class="mb-3">
     <label class="form-label">Profile Image</label>

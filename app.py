@@ -4,6 +4,7 @@ import datetime as dt
 
 from flask import (Flask, render_template, request, redirect, url_for, session,
                    flash, jsonify, abort)
+from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -33,7 +34,8 @@ class User(db.Model):
     password_hash = db.Column(db.String, nullable=False)
     must_change = db.Column(db.Boolean, default=False)
     image = db.Column(db.String)
-    theme_color = db.Column(db.String, default='#ffeb3b')
+    theme_light = db.Column(db.String, default='#ffeb3b')
+    theme_dark = db.Column(db.String, default='#ffeb3b')
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -180,7 +182,8 @@ def require_login():
 
 def ensure_admin():
     if not User.query.filter_by(username='admin').first():
-        admin = User(username='admin', must_change=True, theme_color='#ffeb3b')
+        admin = User(username='admin', must_change=True,
+                     theme_light='#ffeb3b', theme_dark='#ffeb3b')
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
@@ -232,11 +235,38 @@ def save_image(file, code: str):
 def log_action(action, item=None, container=None, location=None, description=None):
     if description is None:
         if action == 'item to container' and item and container:
-            description = f'Item <b>{item.name}</b> was moved to <b>{container.name}</b>'
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> "
+                f"was moved to <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a>"
+            )
         elif action == 'item to location' and item and location:
-            description = f'Item <b>{item.name}</b> was moved to <b>{location.name}</b>'
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> "
+                f"was moved to <a href='{url_for('location_detail', code=location.code)}'><b>{location.name}</b></a>"
+            )
         elif action == 'container to location' and container and location:
-            description = f'Container <b>{container.name}</b> was moved to <b>{location.name}</b>'
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> "
+                f"was moved to <a href='{url_for('location_detail', code=location.code)}'><b>{location.name}</b></a>"
+            )
+        elif action == 'created item' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was created"
+        elif action == 'created container' and container:
+            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> was created"
+        elif action == 'created location' and location:
+            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> was created"
+        elif action == 'edited item' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was edited"
+        elif action == 'edited container' and container:
+            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> was edited"
+        elif action == 'edited location' and location:
+            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> was edited"
+        elif action == 'deleted item' and item:
+            description = f"<b>{item.name}</b> was deleted"
+        elif action == 'deleted container' and container:
+            description = f"<b>{container.name}</b> was deleted"
+        elif action == 'deleted location' and location:
+            description = f"<b>{location.name}</b> was deleted"
         else:
             description = action
     h = History(action=action, description=description, item=item,
@@ -344,9 +374,12 @@ def account():
         user.username = request.form['username']
         if request.form.get('password'):
             user.set_password(request.form['password'])
-        color = request.form.get('theme_color')
-        if color:
-            user.theme_color = color
+        light = request.form.get('theme_light')
+        dark = request.form.get('theme_dark')
+        if light:
+            user.theme_light = light
+        if dark:
+            user.theme_dark = dark
         img = save_image(request.files.get('image'), f'user_{user.id}')
         if img:
             user.image = img
@@ -401,6 +434,46 @@ def logs():
     return render_template('admin_log.html', logs=logs)
 
 
+@app.route('/admin/users', methods=['GET', 'POST'])
+def admin_users():
+    user = current_user()
+    if not user or user.username != 'admin':
+        abort(403)
+    if request.method == 'POST':
+        target = User.query.get_or_404(int(request.form['user_id']))
+        if request.form.get('delete'):
+            db.session.delete(target)
+            db.session.commit()
+            flash('User deleted', 'info')
+        else:
+            target.username = request.form['username']
+            if request.form.get('password'):
+                target.set_password(request.form['password'])
+            db.session.commit()
+            flash('User updated', 'info')
+        return redirect(url_for('admin_users'))
+    users = User.query.all()
+    return render_template('admin_users.html', users=users)
+
+
+@app.route('/admin/ssl', methods=['GET', 'POST'])
+def admin_ssl():
+    user = current_user()
+    if not user or user.username != 'admin':
+        abort(403)
+    if request.method == 'POST':
+        cert = request.files.get('cert')
+        key = request.files.get('key')
+        os.makedirs('ssl', exist_ok=True)
+        if cert and cert.filename:
+            cert.save(os.path.join('ssl', 'cert.pem'))
+        if key and key.filename:
+            key.save(os.path.join('ssl', 'key.pem'))
+        flash('SSL files uploaded. Configure your server accordingly.', 'info')
+        return redirect(url_for('admin_ssl'))
+    return render_template('admin_ssl.html')
+
+
 @app.route('/item/<code>')
 def item_detail(code):
     item = Item.query.filter_by(code=code).first_or_404()
@@ -422,17 +495,21 @@ def location_detail(code):
 @app.route('/add/item', methods=['GET', 'POST'])
 def add_item():
     if request.method == 'POST':
-        name = request.form['name']
-        type_ = request.form['type']
+        name = request.form['name'].title()
+        type_ = request.form['type'].title()
         quantity = int(request.form['quantity'])
         code = generate_code('IT')
         img = save_image(request.files.get('image'), code)
+        existing = Item.query.filter(db.func.lower(Item.name) == name.lower()).first()
         item = Item(name=name, type=type_, quantity=quantity, code=code, image=img,
                     created_by=current_user(), updated_by=current_user())
         db.session.add(item)
         db.session.commit()
         generate_qr(code)
         log_action('created item', item=item)
+        if existing:
+            msg = Markup(f"Warning: <a href='{url_for('item_detail', code=existing.code)}'><b>{existing.name}</b></a> already exists with quantity {existing.quantity}.")
+            flash(msg, 'warning')
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
@@ -442,9 +519,9 @@ def add_item():
 @app.route('/add/container', methods=['GET', 'POST'])
 def add_container():
     if request.method == 'POST':
-        name = request.form['name']
-        size = request.form['size']
-        color = request.form['color']
+        name = request.form['name'].title()
+        size = request.form['size'].title()
+        color = request.form['color'].title()
         code = generate_code('CT')
         img = save_image(request.files.get('image'), code)
         container = Container(name=name, size=size, color=color,
@@ -464,7 +541,7 @@ def add_container():
 def add_location():
     parents = Location.query.all()
     if request.method == 'POST':
-        name = request.form['name']
+        name = request.form['name'].title()
         parent_id = request.form.get('parent_id') or None
         code = generate_code('LC')
         img = save_image(request.files.get('image'), code)
@@ -483,8 +560,8 @@ def add_location():
 def edit_item(code):
     item = Item.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        item.name = request.form['name']
-        item.type = request.form['type']
+        item.name = request.form['name'].title()
+        item.type = request.form['type'].title()
         item.quantity = int(request.form['quantity'])
         img = save_image(request.files.get('image'), item.code)
         if img:
@@ -511,9 +588,9 @@ def delete_item(code):
 def edit_container(code):
     container = Container.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        container.name = request.form['name']
-        container.size = request.form['size']
-        container.color = request.form['color']
+        container.name = request.form['name'].title()
+        container.size = request.form['size'].title()
+        container.color = request.form['color'].title()
         img = save_image(request.files.get('image'), container.code)
         if img:
             container.image = img
@@ -540,7 +617,7 @@ def edit_location(code):
     location = Location.query.filter_by(code=code).first_or_404()
     parents = Location.query.filter(Location.id != location.id).all()
     if request.method == 'POST':
-        location.name = request.form['name']
+        location.name = request.form['name'].title()
         parent_id = request.form.get('parent_id') or None
         location.parent_id = parent_id
         img = save_image(request.files.get('image'), location.code)
