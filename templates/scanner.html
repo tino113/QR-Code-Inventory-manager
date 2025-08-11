@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Scanner</h2>
+<div class="mb-3">
+  <label>Pair window (seconds): <span id="window-label">10</span></label>
+  <input type="range" id="window" class="form-range" min="1" max="60" value="10">
+</div>
+<p>Please allow camera access when prompted.</p>
+<div id="reader" style="width:100%;max-width:400px;"></div>
+<div id="scan-message" class="mt-3"></div>
+<ul id="scan-log" class="list-group mt-3"></ul>
+<script src="https://unpkg.com/html5-qrcode@2.3.9/html5-qrcode.min.js"></script>
+<script>
+const windowSlider = document.getElementById('window');
+const windowLabel = document.getElementById('window-label');
+windowSlider.oninput = () => windowLabel.textContent = windowSlider.value;
+const html5QrCode = new Html5Qrcode('reader');
+const logList = document.getElementById('scan-log');
+function beep(){
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  osc.frequency.value = 440;
+  osc.connect(ctx.destination);
+  osc.start();
+  setTimeout(()=>osc.stop(),150);
+}
+function start(){
+  html5QrCode.start({ facingMode: 'environment' }, {fps:10, qrbox:250}, onScanSuccess)
+    .catch(err => { console.error(err); });
+}
+let last = null;
+let ready = true;
+function onScanSuccess(decodedText){
+  if(!ready) return;
+  ready = false;
+  beep();
+  fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
+    .then(r=>r.json()).then(data=>{
+      const msg = document.getElementById('scan-message');
+      if(data.message){
+        msg.textContent = data.message;
+        logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">${data.message}</li>`);
+        last = null;
+      }else if(data.pending){
+        msg.textContent = 'First code scanned...';
+        logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">Scanned ${decodedText}</li>`);
+        last = {type:data.type, code:data.code};
+        setTimeout(()=>{
+          if(last && last.code === data.code){
+            window.location = `/${data.type}/${data.code}`;
+          }
+        }, windowSlider.value * 1000);
+      }
+      setTimeout(()=>{ ready = true; }, 1000);
+    });
+}
+start();
+</script>
+{% endblock %}
+

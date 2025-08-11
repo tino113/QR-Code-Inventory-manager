@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ 'Edit' if edit else 'Add' }} Container</h2>
+<form method="post" enctype="multipart/form-data">
+  <div class="mb-3">
+    <label class="form-label">Name</label>
+    <input class="form-control" type="text" name="name" value="{{ container.name if edit else '' }}">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Size</label>
+    <input class="form-control" type="text" name="size" list="size-list" value="{{ container.size if edit else '' }}">
+    <datalist id="size-list">
+      {% for s in sizes %}<option value="{{ s }}">{% endfor %}
+    </datalist>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Color</label>
+    <input class="form-control" type="text" name="color" list="color-list" value="{{ container.color if edit else '' }}">
+    <datalist id="color-list">
+      {% for c in colors %}<option value="{{ c }}">{% endfor %}
+    </datalist>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Image</label>
+    <input class="form-control" type="file" name="image">
+  </div>
+  <button class="btn btn-primary" type="submit">Submit</button>
+</form>
+{% endblock %}
+

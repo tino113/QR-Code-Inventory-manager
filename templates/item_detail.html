@@ -1,0 +1,47 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ item.name }}</h2>
+{% if item.image %}
+  <img src="{{ url_for('static', filename=item.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
+{% endif %}
+<img src="{{ url_for('static', filename='qr/' + item.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
+<table class="table table-sm mb-3">
+  <tr><th>Type</th><td>{{ item.type }}</td></tr>
+  <tr><th>Quantity</th><td>{{ item.quantity }}</td></tr>
+  <tr><th>Location</th><td>{{ item.location.full_path() if item.location else '' }}</td></tr>
+  <tr><th>Container</th><td>{{ item.container.name if item.container else '' }}</td></tr>
+  <tr><th>Created</th><td>{{ item.created_at }} by {{ item.created_by.username if item.created_by else 'n/a' }}</td></tr>
+  <tr><th>Updated</th><td>{{ item.updated_at }} by {{ item.updated_by.username if item.updated_by else 'n/a' }}</td></tr>
+  <tr><th>Missing</th><td>{{ 'Yes' if item.missing else 'No' }}</td></tr>
+</table>
+<div class="buttons-vertical">
+  <a class="btn btn-secondary" href="/item/{{ item.code }}/split">Split</a>
+  <a class="btn btn-warning" href="/item/{{ item.code }}/remove">Remove from location</a>
+  <a class="btn btn-info" href="/item/{{ item.code }}/edit">Edit</a>
+  <a class="btn btn-danger" href="/item/{{ item.code }}/delete" onclick="return confirm('Delete item?');">Delete</a>
+  <form action="/item/{{ item.code }}/missing" method="post">
+    <button class="btn btn-danger w-100">Report Missing</button>
+  </form>
+  <form action="/item/{{ item.code }}/regen" method="post">
+    <button class="btn btn-secondary w-100">New QR Code</button>
+  </form>
+</div>
+
+<div class="accordion mt-3" id="logAcc">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingLog">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLog">Item Log</button>
+    </h2>
+    <div id="collapseLog" class="accordion-collapse collapse">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+          {% for h in item.histories|sort(attribute='timestamp', reverse=True) %}
+            <li class="list-group-item">{{ h.timestamp }} - {{ h.action }}{% if h.location %} {{ h.location.full_path() }}{% elif h.container %} {{ h.container.name or h.container.code }}{% endif %}{% if h.user %} by {{ h.user.username }}{% endif %}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

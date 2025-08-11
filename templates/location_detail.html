@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ location.name }}</h2>
+{% if location.image %}
+  <img src="{{ url_for('static', filename=location.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
+{% endif %}
+<img src="{{ url_for('static', filename='qr/' + location.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
+<table class="table table-sm mb-3">
+  <tr><th>Code</th><td>{{ location.code }}</td></tr>
+  <tr><th>Created</th><td>{{ location.created_at }} by {{ location.created_by.username if location.created_by else 'n/a' }}</td></tr>
+  <tr><th>Updated</th><td>{{ location.updated_at }} by {{ location.updated_by.username if location.updated_by else 'n/a' }}</td></tr>
+</table>
+<div class="buttons-vertical">
+  <a class="btn btn-info" href="/location/{{ location.code }}/edit">Edit</a>
+  <a class="btn btn-danger" href="/location/{{ location.code }}/delete" onclick="return confirm('Delete location?');">Delete</a>
+</div>
+{% if location.parent %}
+<p>Parent: <a href="/location/{{ location.parent.code }}">{{ location.parent.full_path() }}</a></p>
+{% endif %}
+<h4>Children</h4>
+<ul>
+{% for child in location.children %}
+  <li><a href="/location/{{ child.code }}">{{ child.full_path() }}</a></li>
+{% endfor %}
+</ul>
+<div class="accordion" id="locAcc">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingContainers">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContainers">Containers</button>
+    </h2>
+    <div id="collapseContainers" class="accordion-collapse collapse">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for c in location.all_containers() %}
+          {% set rel = c.path_from(location) %}
+          <li class="list-group-item"><a href="/container/{{ c.code }}">{{ c.name or c.code }}{% if rel %} / {{ rel }}{% endif %}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingItems">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
+    </h2>
+    <div id="collapseItems" class="accordion-collapse collapse">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for i in location.all_items() %}
+          {% set rel = i.path_from(location) %}
+          <li class="list-group-item"><a href="/item/{{ i.code }}">{{ i.name }} ({{ i.quantity }}){% if rel %} / {{ rel }}{% endif %}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

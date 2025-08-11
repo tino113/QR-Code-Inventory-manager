@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>{{ 'Edit' if edit else 'Add' }} Item</h2>
+<form method="post" enctype="multipart/form-data">
+  <div class="mb-3">
+    <label class="form-label">Name</label>
+    <input class="form-control" type="text" name="name" list="name-list" value="{{ item.name if edit else '' }}" required>
+    <datalist id="name-list">
+      {% for n in names %}<option value="{{ n }}">{% endfor %}
+    </datalist>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Type</label>
+    <input class="form-control" type="text" name="type" list="type-list" value="{{ item.type if edit else '' }}" required>
+    <datalist id="type-list">
+      {% for t in types %}<option value="{{ t }}">{% endfor %}
+    </datalist>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Quantity</label>
+    <input class="form-control" type="number" name="quantity" value="{{ item.quantity if edit else '1' }}" required>
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Image</label>
+    <input class="form-control" type="file" name="image">
+  </div>
+  <button class="btn btn-primary" type="submit">Submit</button>
+</form>
+{% endblock %}
+
