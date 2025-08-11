@@ -33,6 +33,7 @@ class User(db.Model):
     password_hash = db.Column(db.String, nullable=False)
     must_change = db.Column(db.Boolean, default=False)
     image = db.Column(db.String)
+    theme_color = db.Column(db.String, default='#ffeb3b')
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -127,7 +128,7 @@ def require_login():
 
 def ensure_admin():
     if not User.query.filter_by(username='admin').first():
-        admin = User(username='admin', must_change=True)
+        admin = User(username='admin', must_change=True, theme_color='#ffeb3b')
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
@@ -282,6 +283,9 @@ def account():
         user.username = request.form['username']
         if request.form.get('password'):
             user.set_password(request.form['password'])
+        color = request.form.get('theme_color')
+        if color:
+            user.theme_color = color
         img = save_image(request.files.get('image'), f'user_{user.id}')
         if img:
             user.image = img
@@ -535,6 +539,19 @@ def process_pair(first_code: str, second_code: str) -> str:
         db.session.commit()
         return 'Container moved to location.'
     return 'No action for scanned pair.'
+
+
+@app.route('/registrations', methods=['GET', 'POST'])
+def registrations():
+    items = Item.query.all()
+    containers = Container.query.all()
+    locations = Location.query.all()
+    message = None
+    if request.method == 'POST':
+        first = request.form['first']
+        second = request.form['second']
+        message = process_pair(first, second)
+    return render_template('registrations.html', items=items, containers=containers, locations=locations, message=message)
 
 
 @app.route('/item/<code>/split', methods=['GET', 'POST'])

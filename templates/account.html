@@ -11,6 +11,10 @@
     <input class="form-control" type="password" name="password">
   </div>
   <div class="mb-3">
+    <label class="form-label">Theme Colour</label>
+    <input class="form-control form-control-color" type="color" name="theme_color" value="{{ user.theme_color or '#ffeb3b' }}">
+  </div>
+  <div class="mb-3">
     <label class="form-label">Profile Image</label>
     <input class="form-control" type="file" name="image">
   </div>

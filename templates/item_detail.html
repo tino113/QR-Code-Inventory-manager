@@ -5,13 +5,13 @@
   <img src="{{ url_for('static', filename=item.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
 {% endif %}
 <img src="{{ url_for('static', filename='qr/' + item.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
-<ul class="list-group mb-3">
-  <li>Type: {{ item.type }}</li>
-  <li>Quantity: {{ item.quantity }}</li>
-  <li>Created: {{ item.created_at }} by {{ item.created_by.username if item.created_by else 'n/a' }}</li>
-  <li>Updated: {{ item.updated_at }} by {{ item.updated_by.username if item.updated_by else 'n/a' }}</li>
-  <li>Missing: {{ 'Yes' if item.missing else 'No' }}</li>
-</ul>
+<table class="table table-sm mb-3">
+  <tr><th>Type</th><td>{{ item.type }}</td></tr>
+  <tr><th>Quantity</th><td>{{ item.quantity }}</td></tr>
+  <tr><th>Created</th><td>{{ item.created_at }} by {{ item.created_by.username if item.created_by else 'n/a' }}</td></tr>
+  <tr><th>Updated</th><td>{{ item.updated_at }} by {{ item.updated_by.username if item.updated_by else 'n/a' }}</td></tr>
+  <tr><th>Missing</th><td>{{ 'Yes' if item.missing else 'No' }}</td></tr>
+</table>
 <div class="buttons-vertical">
   <a class="btn btn-secondary" href="/item/{{ item.code }}/split">Split</a>
   <a class="btn btn-warning" href="/item/{{ item.code }}/remove">Remove from location</a>
