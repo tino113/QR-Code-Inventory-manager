@@ -1,6 +1,23 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>User Management</h2>
+<form method="post" class="row g-2 align-items-end mb-3">
+  <input type="hidden" name="add" value="1">
+  <div class="col-12 col-md-3">
+    <label class="form-label">Username</label>
+    <input type="text" name="username" class="form-control" required>
+  </div>
+  <div class="col-12 col-md-3">
+    <label class="form-label">Password</label>
+    <input type="password" name="password" class="form-control" required>
+  </div>
+  <div class="col-12 col-md-2">
+    <label class="form-label">&nbsp;</label>
+    <div>
+      <button class="btn btn-success" type="submit">Add</button>
+    </div>
+  </div>
+</form>
 {% for u in users %}
 <form method="post" class="row g-2 align-items-end mb-2">
   <input type="hidden" name="user_id" value="{{ u.id }}">

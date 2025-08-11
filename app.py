@@ -9,6 +9,7 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import qrcode
+import subprocess
 
 
 app = Flask(__name__)
@@ -34,7 +35,7 @@ class User(db.Model):
     password_hash = db.Column(db.String, nullable=False)
     must_change = db.Column(db.Boolean, default=False)
     image = db.Column(db.String)
-    theme_light = db.Column(db.String, default='#ffeb3b')
+    theme_light = db.Column(db.String, default='#800080')
     theme_dark = db.Column(db.String, default='#ffeb3b')
 
     def set_password(self, password: str):
@@ -87,6 +88,7 @@ class Container(db.Model, TimestampMixin):
     size = db.Column(db.String)
     color = db.Column(db.String)
     image = db.Column(db.String)
+    missing = db.Column(db.Boolean, default=False)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -183,7 +185,7 @@ def require_login():
 def ensure_admin():
     if not User.query.filter_by(username='admin').first():
         admin = User(username='admin', must_change=True,
-                     theme_light='#ffeb3b', theme_dark='#ffeb3b')
+                     theme_light='#800080', theme_dark='#ffeb3b')
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
@@ -267,6 +269,28 @@ def log_action(action, item=None, container=None, location=None, description=Non
             description = f"<b>{container.name}</b> was deleted"
         elif action == 'deleted location' and location:
             description = f"<b>{location.name}</b> was deleted"
+        elif action == 'reported missing item' and item:
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was reported missing"
+            )
+        elif action == 'reported missing container' and container:
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported missing"
+            )
+        elif action == 'removed from location' and item:
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was removed from its location"
+            )
+        elif action == 'removed container from location' and container:
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was removed from its location"
+            )
+        elif action == 'regenerated code' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> QR code regenerated"
+        elif action == 'regenerated container code' and container:
+            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> QR code regenerated"
+        elif action == 'regenerated location code' and location:
+            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> QR code regenerated"
         else:
             description = action
     h = History(action=action, description=description, item=item,
@@ -440,17 +464,26 @@ def admin_users():
     if not user or user.username != 'admin':
         abort(403)
     if request.method == 'POST':
-        target = User.query.get_or_404(int(request.form['user_id']))
-        if request.form.get('delete'):
-            db.session.delete(target)
+        if request.form.get('add'):
+            username = request.form['username'].title()
+            password = request.form['password']
+            new_user = User(username=username)
+            new_user.set_password(password)
+            db.session.add(new_user)
             db.session.commit()
-            flash('User deleted', 'info')
+            flash('User added', 'info')
         else:
-            target.username = request.form['username']
-            if request.form.get('password'):
-                target.set_password(request.form['password'])
-            db.session.commit()
-            flash('User updated', 'info')
+            target = User.query.get_or_404(int(request.form['user_id']))
+            if request.form.get('delete'):
+                db.session.delete(target)
+                db.session.commit()
+                flash('User deleted', 'info')
+            else:
+                target.username = request.form['username'].title()
+                if request.form.get('password'):
+                    target.set_password(request.form['password'])
+                db.session.commit()
+                flash('User updated', 'info')
         return redirect(url_for('admin_users'))
     users = User.query.all()
     return render_template('admin_users.html', users=users)
@@ -472,6 +505,24 @@ def admin_ssl():
         flash('SSL files uploaded. Configure your server accordingly.', 'info')
         return redirect(url_for('admin_ssl'))
     return render_template('admin_ssl.html')
+
+
+@app.route('/admin/ssl/generate', methods=['POST'])
+def admin_ssl_generate():
+    user = current_user()
+    if not user or user.username != 'admin':
+        abort(403)
+    domain = request.form['domain']
+    email = request.form['email']
+    try:
+        subprocess.run([
+            'certbot', 'certonly', '--standalone', '-d', domain,
+            '-m', email, '--agree-tos', '--non-interactive'
+        ], check=True)
+        flash('Certificate generated. Configure your server to use it.', 'info')
+    except Exception as e:
+        flash(f'Error generating certificate: {e}', 'danger')
+    return redirect(url_for('admin_ssl'))
 
 
 @app.route('/item/<code>')
@@ -508,7 +559,11 @@ def add_item():
         generate_qr(code)
         log_action('created item', item=item)
         if existing:
-            msg = Markup(f"Warning: <a href='{url_for('item_detail', code=existing.code)}'><b>{existing.name}</b></a> already exists with quantity {existing.quantity}.")
+            undo_url = url_for('delete_item', code=code)
+            msg = Markup(
+                f"Warning: <a href='{url_for('item_detail', code=existing.code)}'><b>{existing.name}</b></a> already exists with quantity {existing.quantity}. "
+                f"<a class='btn btn-sm btn-danger ms-2' href='{undo_url}'>Undo</a>"
+            )
             flash(msg, 'warning')
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
@@ -612,6 +667,53 @@ def delete_container(code):
     return redirect(url_for('index'))
 
 
+@app.route('/container/<code>/remove')
+def remove_container_location(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    container.location = None
+    container.updated_by = current_user()
+    db.session.add(History(container=container, action='removed from location', user=current_user()))
+    for it in container.items:
+        it.location = None
+        it.updated_by = current_user()
+        db.session.add(History(item=it, action='removed from location', user=current_user()))
+    db.session.commit()
+    log_action('removed container from location', container=container)
+    return redirect(url_for('container_detail', code=code))
+
+
+@app.route('/container/<code>/missing', methods=['POST'])
+def report_container_missing(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    container.missing = True
+    container.updated_by = current_user()
+    db.session.commit()
+    log_action('reported missing container', container=container)
+    return redirect(url_for('container_detail', code=code))
+
+
+@app.route('/container/<code>/regen', methods=['POST'])
+def regenerate_container_code(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    new_code = generate_code('CT')
+    if container.image:
+        ext = os.path.splitext(container.image)[1]
+        old_path = os.path.join('static', container.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        container.image = new_rel
+    old_qr = qr_path(container.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    container.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('regenerated container code', container=container)
+    return redirect(url_for('container_detail', code=new_code))
+
+
 @app.route('/location/<code>/edit', methods=['GET', 'POST'])
 def edit_location(code):
     location = Location.query.filter_by(code=code).first_or_404()
@@ -641,6 +743,28 @@ def delete_location(code):
     db.session.delete(location)
     db.session.commit()
     return redirect(url_for('index'))
+
+
+@app.route('/location/<code>/regen', methods=['POST'])
+def regenerate_location_code(code):
+    location = Location.query.filter_by(code=code).first_or_404()
+    new_code = generate_code('LC')
+    if location.image:
+        ext = os.path.splitext(location.image)[1]
+        old_path = os.path.join('static', location.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        location.image = new_rel
+    old_qr = qr_path(location.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    location.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('regenerated location code', location=location)
+    return redirect(url_for('location_detail', code=new_code))
 
 
 @app.route('/scan/<code>')
@@ -692,7 +816,7 @@ def process_pair(first_code: str, second_code: str) -> str:
         first.updated_by = current_user()
         db.session.commit()
         msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to container', item=first, container=second, description=msg)
+        log_action('item to container', item=first, container=second)
         return msg
     if isinstance(first, Item) and isinstance(second, Location):
         first.location = second
@@ -700,14 +824,14 @@ def process_pair(first_code: str, second_code: str) -> str:
         first.updated_by = current_user()
         db.session.commit()
         msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to location', item=first, location=second, description=msg)
+        log_action('item to location', item=first, location=second)
         return msg
     if isinstance(first, Container) and isinstance(second, Location):
         first.location = second
         first.updated_by = current_user()
         db.session.commit()
         msg = f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('container to location', container=first, location=second, description=msg)
+        log_action('container to location', container=first, location=second)
         for it in first.items:
             it.location = second
             it.updated_by = current_user()
@@ -764,6 +888,7 @@ def remove_item_location(code):
     db.session.add(History(item=item, action='removed from location',
                            user=current_user()))
     db.session.commit()
+    log_action('removed from location', item=item)
     return redirect(url_for('item_detail', code=code))
 
 
@@ -773,7 +898,7 @@ def report_missing(code):
     item.missing = True
     item.updated_by = current_user()
     db.session.commit()
-    log_action('reported missing', item=item)
+    log_action('reported missing item', item=item)
     return redirect(url_for('item_detail', code=code))
 
 

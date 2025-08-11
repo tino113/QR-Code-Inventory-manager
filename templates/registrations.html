@@ -45,6 +45,6 @@
   <button class="btn btn-primary" type="submit">Register</button>
 </form>
 {% if message %}
-<div class="alert alert-info">{{ message }}</div>
+<div class="alert alert-info">{{ message|safe }}</div>
 {% endif %}
 {% endblock %}

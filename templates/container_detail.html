@@ -5,6 +5,7 @@
   <img src="{{ url_for('static', filename=container.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
 {% endif %}
 <img src="{{ url_for('static', filename='qr/' + container.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
+<a class="btn btn-secondary mb-3 d-block mx-auto" download href="{{ url_for('static', filename='qr/' + container.code + '.png') }}">Download QR</a>
 <table class="table table-sm mb-3">
   <tr><th>Name</th><td>{{ container.name }}</td></tr>
   <tr><th>Size</th><td>{{ container.size }}</td></tr>
@@ -15,14 +16,21 @@
 </table>
 <div class="buttons-vertical">
   <a class="btn btn-info" href="/container/{{ container.code }}/edit">Edit</a>
+  <a class="btn btn-warning" href="/container/{{ container.code }}/remove">Remove from location</a>
+  <form action="/container/{{ container.code }}/missing" method="post">
+    <button class="btn btn-danger w-100">Report Missing</button>
+  </form>
+  <form action="/container/{{ container.code }}/regen" method="post">
+    <button class="btn btn-secondary w-100">New QR Code</button>
+  </form>
   <a class="btn btn-danger" href="/container/{{ container.code }}/delete" onclick="return confirm('Delete container?');">Delete</a>
 </div>
-<div class="accordion mt-3" id="contAcc">
+  <div class="accordion mt-3" id="contAcc">
   <div class="accordion-item">
     <h2 class="accordion-header" id="headingItems">
-      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
     </h2>
-    <div id="collapseItems" class="accordion-collapse collapse">
+    <div id="collapseItems" class="accordion-collapse collapse show">
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for item in container.items %}
