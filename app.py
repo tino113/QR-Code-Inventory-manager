@@ -4,10 +4,13 @@ import datetime as dt
 
 from flask import (Flask, render_template, request, redirect, url_for, session,
                    flash, jsonify, abort)
+from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from sqlalchemy import or_, and_
 import qrcode
+import glob
 
 
 app = Flask(__name__)
@@ -33,7 +36,8 @@ class User(db.Model):
     password_hash = db.Column(db.String, nullable=False)
     must_change = db.Column(db.Boolean, default=False)
     image = db.Column(db.String)
-    theme_color = db.Column(db.String, default='#ffeb3b')
+    theme_light = db.Column(db.String, default='#800080')
+    theme_dark = db.Column(db.String, default='#ffeb3b')
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -64,12 +68,16 @@ class Location(db.Model, TimestampMixin):
         return self.name
 
     def all_items(self):
-        items = list(self.items)
+        seen = {}
+        for i in self.items:
+            seen[i.id] = i
         for c in self.containers:
-            items.extend(c.items)
+            for i in c.items:
+                seen[i.id] = i
         for child in self.children:
-            items.extend(child.all_items())
-        return items
+            for i in child.all_items():
+                seen[i.id] = i
+        return list(seen.values())
 
     def all_containers(self):
         conts = list(self.containers)
@@ -85,6 +93,7 @@ class Container(db.Model, TimestampMixin):
     size = db.Column(db.String)
     color = db.Column(db.String)
     image = db.Column(db.String)
+    missing = db.Column(db.Boolean, default=False)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -152,6 +161,14 @@ class History(db.Model):
     user = db.relationship('User', backref='histories')
 
 
+class Relation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    first_type = db.Column(db.String, nullable=False)
+    first_id = db.Column(db.Integer, nullable=False)
+    second_type = db.Column(db.String, nullable=False)
+    second_id = db.Column(db.Integer, nullable=False)
+
+
 def current_user():
     uid = session.get('user_id')
     if uid:
@@ -180,7 +197,8 @@ def require_login():
 
 def ensure_admin():
     if not User.query.filter_by(username='admin').first():
-        admin = User(username='admin', must_change=True, theme_color='#ffeb3b')
+        admin = User(username='admin', must_change=True,
+                     theme_light='#800080', theme_dark='#ffeb3b')
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
@@ -191,7 +209,7 @@ def setup_database():
         # issue simple selects to ensure all tables match the models;
         # missing columns will raise an OperationalError which triggers
         # a full rebuild of the schema
-        for model in (User, Location, Container, Item, History):
+        for model in (User, Location, Container, Item, History, Relation):
             db.session.query(model).first()
         ensure_admin()
     except Exception:
@@ -232,11 +250,74 @@ def save_image(file, code: str):
 def log_action(action, item=None, container=None, location=None, description=None):
     if description is None:
         if action == 'item to container' and item and container:
-            description = f'Item <b>{item.name}</b> was moved to <b>{container.name}</b>'
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> "
+                f"was moved to <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a>"
+            )
         elif action == 'item to location' and item and location:
-            description = f'Item <b>{item.name}</b> was moved to <b>{location.name}</b>'
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> "
+                f"was moved to <a href='{url_for('location_detail', code=location.code)}'><b>{location.name}</b></a>"
+            )
         elif action == 'container to location' and container and location:
-            description = f'Container <b>{container.name}</b> was moved to <b>{location.name}</b>'
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> "
+                f"was moved to <a href='{url_for('location_detail', code=location.code)}'><b>{location.name}</b></a>"
+            )
+        elif action == 'created item' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was created"
+        elif action == 'created container' and container:
+            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> was created"
+        elif action == 'created location' and location:
+            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> was created"
+        elif action == 'edited item' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was edited"
+        elif action == 'edited container' and container:
+            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> was edited"
+        elif action == 'edited location' and location:
+            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> was edited"
+        elif action == 'deleted item' and item:
+            description = f"<b>{item.name}</b> was deleted"
+        elif action == 'deleted container' and container:
+            description = f"<b>{container.name}</b> was deleted"
+        elif action == 'deleted location' and location:
+            description = f"<b>{location.name}</b> was deleted"
+        elif action == 'reported missing item' and item:
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was reported missing"
+            )
+        elif action == 'reported missing container' and container:
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported missing"
+            )
+        elif action == 'reported found item' and item:
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was reported found"
+            )
+        elif action == 'reported found container' and container:
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported found"
+            )
+        elif action == 'removed from location' and item:
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was removed from its location"
+            )
+        elif action == 'removed container from location' and container:
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was removed from its location"
+            )
+        elif action == 'regenerated code' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> QR code regenerated"
+        elif action == 'regenerated container code' and container:
+            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> QR code regenerated"
+        elif action == 'regenerated location code' and location:
+            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> QR code regenerated"
+        elif action == 'split' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was split"
+        elif action == 'split from' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was created from a split"
+        elif action == 'joined item' and item:
+            description = f"Items were joined into <b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b>"
         else:
             description = action
     h = History(action=action, description=description, item=item,
@@ -273,9 +354,11 @@ def index():
 
     unaccounted = Item.query.filter_by(container_id=None, location_id=None, missing=False).all()
     missing_items = Item.query.filter_by(missing=True).all()
+    missing_containers = Container.query.filter_by(missing=True).all()
     return render_template('index.html', items=items, containers=containers,
                            locations=locations, unaccounted=unaccounted,
                            missing_items=missing_items,
+                           missing_containers=missing_containers,
                            all_locations=all_locations, all_containers=all_containers,
                            request=request)
 
@@ -344,9 +427,12 @@ def account():
         user.username = request.form['username']
         if request.form.get('password'):
             user.set_password(request.form['password'])
-        color = request.form.get('theme_color')
-        if color:
-            user.theme_color = color
+        light = request.form.get('theme_light')
+        dark = request.form.get('theme_dark')
+        if light:
+            user.theme_light = light
+        if dark:
+            user.theme_dark = dark
         img = save_image(request.files.get('image'), f'user_{user.id}')
         if img:
             user.image = img
@@ -401,38 +487,158 @@ def logs():
     return render_template('admin_log.html', logs=logs)
 
 
+@app.route('/admin/users', methods=['GET', 'POST'])
+def admin_users():
+    user = current_user()
+    if not user or user.username != 'admin':
+        abort(403)
+    if request.method == 'POST':
+        if request.form.get('add'):
+            username = request.form['username']
+            password = request.form['password']
+            new_user = User(username=username)
+            new_user.set_password(password)
+            db.session.add(new_user)
+            db.session.commit()
+            flash('User added', 'info')
+        else:
+            target = User.query.get_or_404(int(request.form['user_id']))
+            if request.form.get('delete'):
+                db.session.delete(target)
+                db.session.commit()
+                flash('User deleted', 'info')
+            else:
+                target.username = request.form['username']
+                if request.form.get('password'):
+                    target.set_password(request.form['password'])
+                db.session.commit()
+                flash('User updated', 'info')
+        return redirect(url_for('admin_users'))
+    users = User.query.all()
+    return render_template('admin_users.html', users=users)
+
+
+@app.route('/admin/ssl', methods=['GET', 'POST'])
+def admin_ssl():
+    user = current_user()
+    if not user or user.username != 'admin':
+        abort(403)
+    if request.method == 'POST':
+        cert = request.files.get('cert')
+        key = request.files.get('key')
+        os.makedirs('ssl', exist_ok=True)
+        if cert and cert.filename:
+            cext = os.path.splitext(cert.filename)[1] or '.pem'
+            for f in glob.glob(os.path.join('ssl', 'cert.*')):
+                os.remove(f)
+            cert.save(os.path.join('ssl', f'cert{cext}'))
+        if key and key.filename:
+            kext = os.path.splitext(key.filename)[1] or '.pem'
+            for f in glob.glob(os.path.join('ssl', 'key.*')):
+                os.remove(f)
+            key.save(os.path.join('ssl', f'key{kext}'))
+        flash('SSL files uploaded. Configure your server accordingly.', 'info')
+        return redirect(url_for('admin_ssl'))
+    return render_template('admin_ssl.html')
+
+
 @app.route('/item/<code>')
 def item_detail(code):
     item = Item.query.filter_by(code=code).first_or_404()
-    return render_template('item_detail.html', item=item)
+    rels = Relation.query.filter(or_(and_(Relation.first_type == 'item',
+                                         Relation.first_id == item.id),
+                                    and_(Relation.second_type == 'item',
+                                         Relation.second_id == item.id))).all()
+    related = []
+    for r in rels:
+        if r.first_type == 'item' and r.first_id == item.id:
+            ttype, tid = r.second_type, r.second_id
+        else:
+            ttype, tid = r.first_type, r.first_id
+        if ttype == 'item':
+            t = Item.query.get(tid)
+            related.append({'name': t.name, 'url': url_for('item_detail', code=t.code)})
+        elif ttype == 'container':
+            t = Container.query.get(tid)
+            related.append({'name': t.name or t.code, 'url': url_for('container_detail', code=t.code)})
+        else:
+            t = Location.query.get(tid)
+            related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
+    return render_template('item_detail.html', item=item, related=related)
 
 
 @app.route('/container/<code>')
 def container_detail(code):
     container = Container.query.filter_by(code=code).first_or_404()
-    return render_template('container_detail.html', container=container)
+    rels = Relation.query.filter(or_(and_(Relation.first_type == 'container',
+                                         Relation.first_id == container.id),
+                                    and_(Relation.second_type == 'container',
+                                         Relation.second_id == container.id))).all()
+    related = []
+    for r in rels:
+        if r.first_type == 'container' and r.first_id == container.id:
+            ttype, tid = r.second_type, r.second_id
+        else:
+            ttype, tid = r.first_type, r.first_id
+        if ttype == 'item':
+            t = Item.query.get(tid)
+            related.append({'name': t.name, 'url': url_for('item_detail', code=t.code)})
+        elif ttype == 'container':
+            t = Container.query.get(tid)
+            related.append({'name': t.name or t.code, 'url': url_for('container_detail', code=t.code)})
+        else:
+            t = Location.query.get(tid)
+            related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
+    return render_template('container_detail.html', container=container, related=related)
 
 
 @app.route('/location/<code>')
 def location_detail(code):
     location = Location.query.filter_by(code=code).first_or_404()
-    return render_template('location_detail.html', location=location)
+    rels = Relation.query.filter(or_(and_(Relation.first_type == 'location',
+                                         Relation.first_id == location.id),
+                                    and_(Relation.second_type == 'location',
+                                         Relation.second_id == location.id))).all()
+    related = []
+    for r in rels:
+        if r.first_type == 'location' and r.first_id == location.id:
+            ttype, tid = r.second_type, r.second_id
+        else:
+            ttype, tid = r.first_type, r.first_id
+        if ttype == 'item':
+            t = Item.query.get(tid)
+            related.append({'name': t.name, 'url': url_for('item_detail', code=t.code)})
+        elif ttype == 'container':
+            t = Container.query.get(tid)
+            related.append({'name': t.name or t.code, 'url': url_for('container_detail', code=t.code)})
+        else:
+            t = Location.query.get(tid)
+            related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
+    return render_template('location_detail.html', location=location, related=related)
 
 
 @app.route('/add/item', methods=['GET', 'POST'])
 def add_item():
     if request.method == 'POST':
-        name = request.form['name']
-        type_ = request.form['type']
+        name = request.form['name'].title()
+        type_ = request.form['type'].title()
         quantity = int(request.form['quantity'])
         code = generate_code('IT')
         img = save_image(request.files.get('image'), code)
+        existing = Item.query.filter(db.func.lower(Item.name) == name.lower()).first()
         item = Item(name=name, type=type_, quantity=quantity, code=code, image=img,
                     created_by=current_user(), updated_by=current_user())
         db.session.add(item)
         db.session.commit()
         generate_qr(code)
         log_action('created item', item=item)
+        if existing:
+            undo_url = url_for('delete_item', code=code)
+            msg = Markup(
+                f"Warning: <a href='{url_for('item_detail', code=existing.code)}'><b>{existing.name}</b></a> already exists with quantity {existing.quantity}. "
+                f"<a class='btn btn-sm btn-danger ms-2' href='{undo_url}'>Undo</a>"
+            )
+            flash(msg, 'warning')
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
@@ -442,9 +648,9 @@ def add_item():
 @app.route('/add/container', methods=['GET', 'POST'])
 def add_container():
     if request.method == 'POST':
-        name = request.form['name']
-        size = request.form['size']
-        color = request.form['color']
+        name = request.form['name'].title()
+        size = request.form['size'].title()
+        color = request.form['color'].title()
         code = generate_code('CT')
         img = save_image(request.files.get('image'), code)
         container = Container(name=name, size=size, color=color,
@@ -464,7 +670,7 @@ def add_container():
 def add_location():
     parents = Location.query.all()
     if request.method == 'POST':
-        name = request.form['name']
+        name = request.form['name'].title()
         parent_id = request.form.get('parent_id') or None
         code = generate_code('LC')
         img = save_image(request.files.get('image'), code)
@@ -483,8 +689,8 @@ def add_location():
 def edit_item(code):
     item = Item.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        item.name = request.form['name']
-        item.type = request.form['type']
+        item.name = request.form['name'].title()
+        item.type = request.form['type'].title()
         item.quantity = int(request.form['quantity'])
         img = save_image(request.files.get('image'), item.code)
         if img:
@@ -511,9 +717,9 @@ def delete_item(code):
 def edit_container(code):
     container = Container.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        container.name = request.form['name']
-        container.size = request.form['size']
-        container.color = request.form['color']
+        container.name = request.form['name'].title()
+        container.size = request.form['size'].title()
+        container.color = request.form['color'].title()
         img = save_image(request.files.get('image'), container.code)
         if img:
             container.image = img
@@ -535,12 +741,69 @@ def delete_container(code):
     return redirect(url_for('index'))
 
 
+@app.route('/container/<code>/remove')
+def remove_container_location(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    container.location = None
+    container.updated_by = current_user()
+    db.session.add(History(container=container, action='removed from location', user=current_user()))
+    for it in container.items:
+        it.location = None
+        it.updated_by = current_user()
+        db.session.add(History(item=it, action='removed from location', user=current_user()))
+    db.session.commit()
+    log_action('removed container from location', container=container)
+    return redirect(url_for('container_detail', code=code))
+
+
+@app.route('/container/<code>/missing', methods=['POST'])
+def report_container_missing(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    container.missing = True
+    container.updated_by = current_user()
+    db.session.commit()
+    log_action('reported missing container', container=container)
+    return redirect(url_for('container_detail', code=code))
+
+
+@app.route('/container/<code>/found', methods=['POST'])
+def report_container_found(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    container.missing = False
+    container.updated_by = current_user()
+    db.session.commit()
+    log_action('reported found container', container=container)
+    return redirect(url_for('container_detail', code=code))
+
+
+@app.route('/container/<code>/regen', methods=['POST'])
+def regenerate_container_code(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    new_code = generate_code('CT')
+    if container.image:
+        ext = os.path.splitext(container.image)[1]
+        old_path = os.path.join('static', container.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        container.image = new_rel
+    old_qr = qr_path(container.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    container.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('regenerated container code', container=container)
+    return redirect(url_for('container_detail', code=new_code))
+
+
 @app.route('/location/<code>/edit', methods=['GET', 'POST'])
 def edit_location(code):
     location = Location.query.filter_by(code=code).first_or_404()
     parents = Location.query.filter(Location.id != location.id).all()
     if request.method == 'POST':
-        location.name = request.form['name']
+        location.name = request.form['name'].title()
         parent_id = request.form.get('parent_id') or None
         location.parent_id = parent_id
         img = save_image(request.files.get('image'), location.code)
@@ -564,6 +827,28 @@ def delete_location(code):
     db.session.delete(location)
     db.session.commit()
     return redirect(url_for('index'))
+
+
+@app.route('/location/<code>/regen', methods=['POST'])
+def regenerate_location_code(code):
+    location = Location.query.filter_by(code=code).first_or_404()
+    new_code = generate_code('LC')
+    if location.image:
+        ext = os.path.splitext(location.image)[1]
+        old_path = os.path.join('static', location.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        location.image = new_rel
+    old_qr = qr_path(location.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    location.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('regenerated location code', location=location)
+    return redirect(url_for('location_detail', code=new_code))
 
 
 @app.route('/scan/<code>')
@@ -615,7 +900,7 @@ def process_pair(first_code: str, second_code: str) -> str:
         first.updated_by = current_user()
         db.session.commit()
         msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to container', item=first, container=second, description=msg)
+        log_action('item to container', item=first, container=second)
         return msg
     if isinstance(first, Item) and isinstance(second, Location):
         first.location = second
@@ -623,14 +908,14 @@ def process_pair(first_code: str, second_code: str) -> str:
         first.updated_by = current_user()
         db.session.commit()
         msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to location', item=first, location=second, description=msg)
+        log_action('item to location', item=first, location=second)
         return msg
     if isinstance(first, Container) and isinstance(second, Location):
         first.location = second
         first.updated_by = current_user()
         db.session.commit()
         msg = f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('container to location', container=first, location=second, description=msg)
+        log_action('container to location', container=first, location=second)
         for it in first.items:
             it.location = second
             it.updated_by = current_user()
@@ -655,6 +940,36 @@ def registrations():
     return render_template('registrations.html', items=items, containers=containers, locations=locations, message=message)
 
 
+@app.route('/relation/add/<etype>/<code>', methods=['GET', 'POST'])
+def add_relation(etype, code):
+    obj = (Item.query.filter_by(code=code).first() or
+           Container.query.filter_by(code=code).first() or
+           Location.query.filter_by(code=code).first_or_404())
+    items = Item.query.all()
+    containers = Container.query.all()
+    locations = Location.query.all()
+    if request.method == 'POST':
+        tcode = request.form['code']
+        target = (Item.query.filter_by(code=tcode).first() or
+                  Container.query.filter_by(code=tcode).first() or
+                  Location.query.filter_by(code=tcode).first())
+        if target:
+            if isinstance(target, Item):
+                ttype = 'item'
+            elif isinstance(target, Container):
+                ttype = 'container'
+            else:
+                ttype = 'location'
+            rel = Relation(first_type=etype, first_id=obj.id,
+                           second_type=ttype, second_id=target.id)
+            db.session.add(rel)
+            db.session.commit()
+            flash('Relation added', 'info')
+            return redirect(url_for(f'{etype}_detail', code=code))
+    return render_template('add_relation.html', etype=etype, obj=obj,
+                           items=items, containers=containers, locations=locations)
+
+
 @app.route('/item/<code>/split', methods=['GET', 'POST'])
 def split_item(code):
     item = Item.query.filter_by(code=code).first_or_404()
@@ -669,13 +984,36 @@ def split_item(code):
                             code=new_code, image=img,
                             created_by=current_user(), updated_by=current_user())
             db.session.add(new_item)
-            db.session.add(History(item=item, action='split', user=current_user()))
-            db.session.add(History(item=new_item, action='split from',
-                                   user=current_user()))
             db.session.commit()
             generate_qr(new_code)
+            log_action('split', item=item,
+                       description=(f"<a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was split; "
+                                    f"<a href='{url_for('item_detail', code=new_item.code)}'><b>{new_item.name}</b></a> created with {qty}"))
+            log_action('split from', item=new_item,
+                       description=(f"<a href='{url_for('item_detail', code=new_item.code)}'><b>{new_item.name}</b></a> came from "
+                                    f"<a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a>"))
             return redirect(url_for('item_detail', code=code))
     return render_template('split_item.html', item=item)
+
+
+@app.route('/item/<code>/join', methods=['GET', 'POST'])
+def join_item(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    candidates = Item.query.filter_by(name=item.name).filter(Item.id != item.id).all()
+    if request.method == 'POST':
+        selected = request.form.getlist('items')
+        for sid in selected:
+            other = Item.query.get(int(sid))
+            if other:
+                item.quantity += other.quantity
+                log_action('joined item', item=item,
+                           description=(f"<a href='{url_for('item_detail', code=other.code)}'><b>{other.name}</b></a> joined into "
+                                        f"<a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a>"))
+                db.session.delete(other)
+        item.updated_by = current_user()
+        db.session.commit()
+        return redirect(url_for('item_detail', code=code))
+    return render_template('join_item.html', item=item, candidates=candidates)
 
 
 @app.route('/item/<code>/remove')
@@ -683,10 +1021,12 @@ def remove_item_location(code):
     item = Item.query.filter_by(code=code).first_or_404()
     item.location = None
     item.container = None
+    item.missing = False
     item.updated_by = current_user()
     db.session.add(History(item=item, action='removed from location',
                            user=current_user()))
     db.session.commit()
+    log_action('removed from location', item=item)
     return redirect(url_for('item_detail', code=code))
 
 
@@ -696,7 +1036,17 @@ def report_missing(code):
     item.missing = True
     item.updated_by = current_user()
     db.session.commit()
-    log_action('reported missing', item=item)
+    log_action('reported missing item', item=item)
+    return redirect(url_for('item_detail', code=code))
+
+
+@app.route('/item/<code>/found', methods=['POST'])
+def report_found(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    item.missing = False
+    item.updated_by = current_user()
+    db.session.commit()
+    log_action('reported found item', item=item)
     return redirect(url_for('item_detail', code=code))
 
 
@@ -730,6 +1080,13 @@ def scanner():
 if __name__ == '__main__':
     with app.app_context():
         setup_database()
-    ssl = None if os.environ.get('FLASK_NO_SSL') == '1' else 'adhoc'
+    ssl = None
+    if os.environ.get('FLASK_NO_SSL') != '1':
+        cert_files = glob.glob(os.path.join('ssl', 'cert.*'))
+        key_files = glob.glob(os.path.join('ssl', 'key.*'))
+        if cert_files and key_files:
+            ssl = (cert_files[0], key_files[0])
+        else:
+            ssl = 'adhoc'
     app.run(host='0.0.0.0', port=5000, ssl_context=ssl)
 
