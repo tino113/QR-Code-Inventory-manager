@@ -16,6 +16,16 @@ const windowLabel = document.getElementById('window-label');
 windowSlider.oninput = () => windowLabel.textContent = windowSlider.value;
 const html5QrCode = new Html5Qrcode('reader');
 const logList = document.getElementById('scan-log');
+
+// keep a simple array in case we want to inspect the log programmatically
+const scanLog = [];
+
+function addLog(text) {
+  const time = new Date().toLocaleTimeString();
+  scanLog.push({ time, text });
+  logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">${time} - ${text}</li>`);
+}
+
 function beep(){
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   const osc = ctx.createOscillator();
@@ -24,26 +34,35 @@ function beep(){
   osc.start();
   setTimeout(()=>osc.stop(),150);
 }
+
 function start(){
   html5QrCode.start({ facingMode: 'environment' }, {fps:10, qrbox:250}, onScanSuccess)
     .catch(err => { console.error(err); });
 }
+
+// debounce only repeats of the same code within one second
+let lastScan = { code: null, time: 0 };
 let last = null;
-let ready = true;
+
 function onScanSuccess(decodedText){
-  if(!ready) return;
-  ready = false;
+  const now = Date.now();
+  if(lastScan.code === decodedText && (now - lastScan.time) < 1000){
+    return; // ignore rapid repeat of the same code
+  }
+  lastScan = { code: decodedText, time: now };
+
   beep();
+  addLog(`Scanned ${decodedText}`);
+
   fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
     .then(r=>r.json()).then(data=>{
       const msg = document.getElementById('scan-message');
       if(data.message){
         msg.textContent = data.message;
-        logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">${data.message}</li>`);
+        addLog(data.message);
         last = null;
       }else if(data.pending){
         msg.textContent = 'First code scanned...';
-        logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">Scanned ${decodedText}</li>`);
         last = {type:data.type, code:data.code};
         setTimeout(()=>{
           if(last && last.code === data.code){
@@ -51,9 +70,9 @@ function onScanSuccess(decodedText){
           }
         }, windowSlider.value * 1000);
       }
-      setTimeout(()=>{ ready = true; }, 1000);
     });
 }
+
 start();
 </script>
 {% endblock %}
