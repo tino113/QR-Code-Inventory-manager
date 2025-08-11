@@ -6,6 +6,7 @@
   <input type="range" id="window" class="form-range" min="1" max="60" value="10">
 </div>
 <p>Please allow camera access when prompted.</p>
+<select id="camera-select" class="form-select mb-3"></select>
 <div id="reader" style="width:100%;max-width:400px;"></div>
 <div id="scan-message" class="mt-3"></div>
 <ul id="scan-log" class="list-group mt-3"></ul>
@@ -16,6 +17,7 @@ const windowLabel = document.getElementById('window-label');
 windowSlider.oninput = () => windowLabel.textContent = windowSlider.value;
 const html5QrCode = new Html5Qrcode('reader');
 const logList = document.getElementById('scan-log');
+const cameraSelect = document.getElementById('camera-select');
 
 // keep a simple array in case we want to inspect the log programmatically
 const scanLog = [];
@@ -35,10 +37,34 @@ function beep(){
   setTimeout(()=>osc.stop(),150);
 }
 
-function start(){
-  html5QrCode.start({ facingMode: 'environment' }, {fps:10, qrbox:250}, onScanSuccess)
+function start(cameraId){
+  html5QrCode.start(cameraId, {fps:10, qrbox:250}, onScanSuccess)
     .catch(err => { console.error(err); });
 }
+
+function initCameras(){
+  navigator.mediaDevices.getUserMedia({video:true}).then(stream => {
+    stream.getTracks().forEach(t => t.stop());
+    Html5Qrcode.getCameras().then(cameras => {
+      cameras.forEach((cam, idx) => {
+        const opt = document.createElement('option');
+        opt.value = cam.id;
+        opt.text = cam.label || `Camera ${idx+1}`;
+        cameraSelect.appendChild(opt);
+      });
+      if(cameras.length <= 1){
+        cameraSelect.style.display = 'none';
+      }
+      if(cameras[0]){
+        start(cameras[0].id);
+      }
+    }).catch(err => console.error(err));
+  }).catch(err => console.error('Camera permission denied', err));
+}
+
+cameraSelect.addEventListener('change', () => {
+  html5QrCode.stop().then(()=> start(cameraSelect.value));
+});
 
 // debounce only repeats of the same code within one second
 let lastScan = { code: null, time: 0 };
@@ -73,7 +99,7 @@ function onScanSuccess(decodedText){
     });
 }
 
-start();
+initCameras();
 </script>
 {% endblock %}
 
