@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from app import app, db, Item, Location, qr_path, generate_qr, User
+from app import app, db, Item, Location, Container, qr_path, generate_qr, User
 
 
 def setup_module(module):
@@ -76,4 +76,42 @@ def test_report_missing():
     with app.app_context():
         item = Item.query.filter_by(code=code).first()
         assert item.missing is True
+
+
+def test_report_found():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        item = Item.query.filter_by(name='Hammer').first()
+        code = item.code
+    client.post(f'/item/{code}/missing', follow_redirects=True)
+    client.post(f'/item/{code}/found', follow_redirects=True)
+    with app.app_context():
+        item = Item.query.filter_by(code=code).first()
+        assert item.missing is False
+
+
+def test_remove_adds_unaccounted():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        item = Item.query.filter_by(name='Hammer').first()
+        code = item.code
+    client.get(f'/item/{code}/remove', follow_redirects=True)
+    with app.app_context():
+        item = Item.query.filter_by(code=code).first()
+        assert item.location_id is None and item.container_id is None and item.missing is False
+
+
+def test_missing_container_list():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        c = Container(name='Box', code='CT-test', created_by=u, updated_by=u)
+        db.session.add(c)
+        db.session.commit()
+    client.post('/container/CT-test/missing', follow_redirects=True)
+    response = client.get('/')
+    assert b'Box' in response.data
 

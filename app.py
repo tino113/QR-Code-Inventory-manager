@@ -277,6 +277,14 @@ def log_action(action, item=None, container=None, location=None, description=Non
             description = (
                 f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported missing"
             )
+        elif action == 'reported found item' and item:
+            description = (
+                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was reported found"
+            )
+        elif action == 'reported found container' and container:
+            description = (
+                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported found"
+            )
         elif action == 'removed from location' and item:
             description = (
                 f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was removed from its location"
@@ -327,9 +335,11 @@ def index():
 
     unaccounted = Item.query.filter_by(container_id=None, location_id=None, missing=False).all()
     missing_items = Item.query.filter_by(missing=True).all()
+    missing_containers = Container.query.filter_by(missing=True).all()
     return render_template('index.html', items=items, containers=containers,
                            locations=locations, unaccounted=unaccounted,
                            missing_items=missing_items,
+                           missing_containers=missing_containers,
                            all_locations=all_locations, all_containers=all_containers,
                            request=request)
 
@@ -680,6 +690,16 @@ def report_container_missing(code):
     return redirect(url_for('container_detail', code=code))
 
 
+@app.route('/container/<code>/found', methods=['POST'])
+def report_container_found(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    container.missing = False
+    container.updated_by = current_user()
+    db.session.commit()
+    log_action('reported found container', container=container)
+    return redirect(url_for('container_detail', code=code))
+
+
 @app.route('/container/<code>/regen', methods=['POST'])
 def regenerate_container_code(code):
     container = Container.query.filter_by(code=code).first_or_404()
@@ -872,6 +892,7 @@ def remove_item_location(code):
     item = Item.query.filter_by(code=code).first_or_404()
     item.location = None
     item.container = None
+    item.missing = False
     item.updated_by = current_user()
     db.session.add(History(item=item, action='removed from location',
                            user=current_user()))
@@ -887,6 +908,16 @@ def report_missing(code):
     item.updated_by = current_user()
     db.session.commit()
     log_action('reported missing item', item=item)
+    return redirect(url_for('item_detail', code=code))
+
+
+@app.route('/item/<code>/found', methods=['POST'])
+def report_found(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    item.missing = False
+    item.updated_by = current_user()
+    db.session.commit()
+    log_action('reported found item', item=item)
     return redirect(url_for('item_detail', code=code))
 
 

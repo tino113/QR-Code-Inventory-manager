@@ -76,13 +76,16 @@
   </div>
   <div class="accordion-item">
     <h2 class="accordion-header" id="headingMissing">
-      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMissing">Missing Items</button>
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMissing">Missing Items &amp; Containers</button>
     </h2>
     <div id="collapseMissing" class="accordion-collapse collapse show">
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for item in missing_items %}
           <li class="list-group-item"><a href="/item/{{ item.code }}">{{ item.name }} ({{ item.quantity }})</a></li>
+        {% endfor %}
+        {% for c in missing_containers %}
+          <li class="list-group-item"><a href="/container/{{ c.code }}">Container: {{ c.name }}</a></li>
         {% endfor %}
         </ul>
       </div>

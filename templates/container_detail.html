@@ -17,9 +17,15 @@
 <div class="buttons-vertical">
   <a class="btn btn-info" href="/container/{{ container.code }}/edit">Edit</a>
   <a class="btn btn-warning" href="/container/{{ container.code }}/remove">Remove from location</a>
+  {% if container.missing %}
+  <form action="/container/{{ container.code }}/found" method="post">
+    <button class="btn btn-success w-100">Report Found</button>
+  </form>
+  {% else %}
   <form action="/container/{{ container.code }}/missing" method="post">
     <button class="btn btn-danger w-100">Report Missing</button>
   </form>
+  {% endif %}
   <form action="/container/{{ container.code }}/regen" method="post">
     <button class="btn btn-secondary w-100">New QR Code</button>
   </form>

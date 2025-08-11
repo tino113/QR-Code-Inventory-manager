@@ -20,9 +20,15 @@
   <a class="btn btn-warning" href="/item/{{ item.code }}/remove">Remove from location</a>
   <a class="btn btn-info" href="/item/{{ item.code }}/edit">Edit</a>
   <a class="btn btn-danger" href="/item/{{ item.code }}/delete" onclick="return confirm('Delete item?');">Delete</a>
+  {% if item.missing %}
+  <form action="/item/{{ item.code }}/found" method="post">
+    <button class="btn btn-success w-100">Report Found</button>
+  </form>
+  {% else %}
   <form action="/item/{{ item.code }}/missing" method="post">
     <button class="btn btn-danger w-100">Report Missing</button>
   </form>
+  {% endif %}
   <form action="/item/{{ item.code }}/regen" method="post">
     <button class="btn btn-secondary w-100">New QR Code</button>
   </form>
