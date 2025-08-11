@@ -25,11 +25,8 @@ function beep(){
   setTimeout(()=>osc.stop(),150);
 }
 function start(){
-  Html5Qrcode.getCameras().then(cams => {
-    if(cams.length){
-      html5QrCode.start(cams[0].id, {fps:10, qrbox:250}, onScanSuccess);
-    }
-  });
+  html5QrCode.start({ facingMode: 'environment' }, {fps:10, qrbox:250}, onScanSuccess)
+    .catch(err => { console.error(err); });
 }
 let last = null;
 let ready = true;

@@ -8,7 +8,7 @@
     <td>{{ log.timestamp }}</td>
     <td>{{ log.user.username if log.user else 'anon' }}</td>
     <td>{{ log.action }}
-      {% if log.item %}- {{ log.item.name }}{% elif log.container %}- {{ log.container.contents or log.container.code }}{% elif log.location %}- {{ log.location.name }}{% endif %}
+      {% if log.item %}- {{ log.item.name }}{% elif log.container %}- {{ log.container.name or log.container.code }}{% elif log.location %}- {{ log.location.name }}{% endif %}
     </td>
   </tr>
   {% endfor %}

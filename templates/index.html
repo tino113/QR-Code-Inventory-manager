@@ -4,6 +4,7 @@
   <input class="form-control mb-2" type="text" name="q" placeholder="Search" value="{{ request.args.get('q','') }}">
   <div class="row g-2">
     <div class="col"><input class="form-control" type="text" name="name" placeholder="Item name" value="{{ request.args.get('name','') }}"></div>
+    <div class="col"><input class="form-control" type="text" name="type" placeholder="Type" value="{{ request.args.get('type','') }}"></div>
     <div class="col"><input class="form-control" type="number" name="quantity" placeholder="Quantity" value="{{ request.args.get('quantity','') }}"></div>
     <div class="col">
       <select class="form-select" name="location">
@@ -17,7 +18,7 @@
       <select class="form-select" name="container">
         <option value="">Container</option>
         {% for c in all_containers %}
-          <option value="{{ c.id }}" {% if request.args.get('container')==c.id|string %}selected{% endif %}>{{ c.contents or c.code }}</option>
+          <option value="{{ c.id }}" {% if request.args.get('container')==c.id|string %}selected{% endif %}>{{ c.name or c.code }}</option>
         {% endfor %}
       </select>
     </div>
@@ -29,7 +30,7 @@
     <h2 class="accordion-header" id="headingItems">
       <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
     </h2>
-    <div id="collapseItems" class="accordion-collapse collapse show" data-bs-parent="#inv-acc">
+    <div id="collapseItems" class="accordion-collapse collapse show">
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for item in items %}
@@ -41,13 +42,13 @@
   </div>
   <div class="accordion-item">
     <h2 class="accordion-header" id="headingContainers">
-      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContainers">Containers</button>
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContainers">Containers</button>
     </h2>
-    <div id="collapseContainers" class="accordion-collapse collapse" data-bs-parent="#inv-acc">
+    <div id="collapseContainers" class="accordion-collapse collapse show">
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for c in containers %}
-          <li class="list-group-item"><span title="container">📦</span> <a href="/container/{{ c.code }}">{{ c.contents or c.code }}</a></li>
+          <li class="list-group-item"><span title="container">📦</span> <a href="/container/{{ c.code }}">{{ c.name or c.code }}</a></li>
         {% endfor %}
         </ul>
       </div>
@@ -55,9 +56,9 @@
   </div>
   <div class="accordion-item">
     <h2 class="accordion-header" id="headingLocations">
-      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLocations">Locations</button>
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLocations">Locations</button>
     </h2>
-    <div id="collapseLocations" class="accordion-collapse collapse" data-bs-parent="#inv-acc">
+    <div id="collapseLocations" class="accordion-collapse collapse show">
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for l in locations %}
@@ -67,17 +68,33 @@
       </div>
     </div>
   </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingMissing">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMissing">Missing Items</button>
+    </h2>
+    <div id="collapseMissing" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for item in missing_items %}
+          <li class="list-group-item"><a href="/item/{{ item.code }}">{{ item.name }}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingUnacc">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseUnacc">Unaccounted Items</button>
+    </h2>
+    <div id="collapseUnacc" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for item in unaccounted %}
+          <li class="list-group-item"><a href="/item/{{ item.code }}">{{ item.name }}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
 </div>
-<h3 class="mt-4">Missing Items</h3>
-<ul>
-{% for item in missing_items %}
-  <li><a href="/item/{{ item.code }}">{{ item.name }}</a></li>
-{% endfor %}
-</ul>
-<h3>Unaccounted Items</h3>
-<ul>
-{% for item in unaccounted %}
-  <li><a href="/item/{{ item.code }}">{{ item.name }}</a></li>
-{% endfor %}
-</ul>
 {% endblock %}

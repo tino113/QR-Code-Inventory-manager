@@ -6,7 +6,7 @@
 {% endif %}
 <img src="{{ url_for('static', filename='qr/' + container.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
 <ul class="list-group mb-3">
-  <li>Contents: {{ container.contents }}</li>
+  <li>Name: {{ container.name }}</li>
   <li>Size: {{ container.size }}</li>
   <li>Color: {{ container.color }}</li>
   <li>Created: {{ container.created_at }} by {{ container.created_by.username if container.created_by else 'n/a' }}</li>

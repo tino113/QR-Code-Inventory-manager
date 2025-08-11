@@ -21,6 +21,27 @@ body.dark .alert {
   border-color: #555;
 }
 
+body.dark ::placeholder {
+  color: #bbb;
+}
+
+body.dark .form-select option {
+  background-color: #222;
+  color: #eee;
+}
+
+body.dark .list-group-item.active {
+  background-color: #ffeb3b;
+  color: #000;
+  border-color: #ffeb3b;
+}
+
+body.dark .form-control:focus,
+body.dark .form-select:focus {
+  border-color: #ffeb3b;
+  box-shadow: 0 0 0 0.25rem rgba(255,235,59,0.25);
+}
+
 img { border: 1px solid #444; padding: 4px; background: #fff; }
 
 .qr-img { width: 90%; max-width: 200px; }

@@ -66,7 +66,7 @@ class Location(db.Model, TimestampMixin):
 class Container(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String, unique=True, nullable=False)
-    contents = db.Column(db.String)
+    name = db.Column(db.String)
     size = db.Column(db.String)
     color = db.Column(db.String)
     image = db.Column(db.String)
@@ -184,6 +184,8 @@ def index():
     item_query = Item.query
     if request.args.get('name'):
         item_query = item_query.filter(Item.name.contains(request.args['name']))
+    if request.args.get('type'):
+        item_query = item_query.filter(Item.type.contains(request.args['type']))
     if request.args.get('location'):
         item_query = item_query.filter_by(location_id=request.args['location'])
     if request.args.get('container'):
@@ -194,15 +196,13 @@ def index():
 
     all_containers = Container.query.all()
     all_locations = Location.query.all()
-    containers = Container.query
-    locations = Location.query
+    containers = all_containers
+    locations = all_locations
     if q:
-        items = [i for i in items if q.lower() in i.name.lower()]
-        containers = containers.filter(Container.contents.contains(q)).all()
-        locations = locations.filter(Location.name.contains(q)).all()
-    else:
-        containers = containers.all()
-        locations = locations.all()
+        ql = q.lower()
+        items = [i for i in items if ql in i.name.lower() or ql in i.type.lower() or ql in str(i.quantity) or (i.location and ql in i.location.full_path().lower()) or (i.container and i.container.name and ql in i.container.name.lower())]
+        containers = [c for c in containers if (c.name and ql in c.name.lower()) or (c.size and ql in c.size.lower()) or (c.color and ql in c.color.lower())]
+        locations = [l for l in locations if ql in l.full_path().lower()]
 
     unaccounted = Item.query.filter_by(container_id=None, location_id=None, missing=False).all()
     missing_items = Item.query.filter_by(missing=True).all()
@@ -329,18 +329,20 @@ def add_item():
         generate_qr(code)
         log_action('created item', item=item)
         return redirect(url_for('item_detail', code=code))
-    return render_template('add_item.html')
+    names = [n[0] for n in db.session.query(Item.name).distinct()]
+    types = [t[0] for t in db.session.query(Item.type).distinct()]
+    return render_template('add_item.html', names=names, types=types)
 
 
 @app.route('/add/container', methods=['GET', 'POST'])
 def add_container():
     if request.method == 'POST':
-        contents = request.form['contents']
+        name = request.form['name']
         size = request.form['size']
         color = request.form['color']
         code = generate_code('CT')
         img = save_image(request.files.get('image'), code)
-        container = Container(contents=contents, size=size, color=color,
+        container = Container(name=name, size=size, color=color,
                               code=code, image=img,
                               created_by=current_user(), updated_by=current_user())
         db.session.add(container)
@@ -348,7 +350,9 @@ def add_container():
         generate_qr(code)
         log_action('created container', container=container)
         return redirect(url_for('container_detail', code=code))
-    return render_template('add_container.html')
+    sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
+    colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
+    return render_template('add_container.html', sizes=sizes, colors=colors)
 
 
 @app.route('/add/location', methods=['GET', 'POST'])
@@ -366,7 +370,8 @@ def add_location():
         generate_qr(code)
         log_action('created location', location=location)
         return redirect(url_for('location_detail', code=code))
-    return render_template('add_location.html', locations=parents)
+    names = [n[0] for n in db.session.query(Location.name).distinct()]
+    return render_template('add_location.html', locations=parents, names=names)
 
 
 @app.route('/item/<code>/edit', methods=['GET', 'POST'])
@@ -383,7 +388,9 @@ def edit_item(code):
         db.session.commit()
         log_action('edited item', item=item)
         return redirect(url_for('item_detail', code=code))
-    return render_template('add_item.html', item=item, edit=True)
+    names = [n[0] for n in db.session.query(Item.name).distinct()]
+    types = [t[0] for t in db.session.query(Item.type).distinct()]
+    return render_template('add_item.html', item=item, edit=True, names=names, types=types)
 
 
 @app.route('/item/<code>/delete')
@@ -399,7 +406,7 @@ def delete_item(code):
 def edit_container(code):
     container = Container.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        container.contents = request.form['contents']
+        container.name = request.form['name']
         container.size = request.form['size']
         container.color = request.form['color']
         img = save_image(request.files.get('image'), container.code)
@@ -409,7 +416,9 @@ def edit_container(code):
         db.session.commit()
         log_action('edited container', container=container)
         return redirect(url_for('container_detail', code=code))
-    return render_template('add_container.html', container=container, edit=True)
+    sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
+    colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
+    return render_template('add_container.html', container=container, edit=True, sizes=sizes, colors=colors)
 
 
 @app.route('/container/<code>/delete')
@@ -436,8 +445,9 @@ def edit_location(code):
         db.session.commit()
         log_action('edited location', location=location)
         return redirect(url_for('location_detail', code=code))
+    names = [n[0] for n in db.session.query(Location.name).distinct()]
     return render_template('add_location.html', location=location,
-                           locations=parents, edit=True)
+                           locations=parents, names=names, edit=True)
 
 
 @app.route('/location/<code>/delete')

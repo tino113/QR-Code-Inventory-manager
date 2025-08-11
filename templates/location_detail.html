@@ -15,18 +15,18 @@
   <a class="btn btn-danger" href="/location/{{ location.code }}/delete" onclick="return confirm('Delete location?');">Delete</a>
 </div>
 {% if location.parent %}
-<p>Parent: <a href="/location/{{ location.parent.code }}">{{ location.parent.name }}</a></p>
+<p>Parent: <a href="/location/{{ location.parent.code }}">{{ location.parent.full_path() }}</a></p>
 {% endif %}
 <h4>Children</h4>
 <ul>
 {% for child in location.children %}
-  <li><a href="/location/{{ child.code }}">{{ child.name }}</a></li>
+  <li><a href="/location/{{ child.code }}">{{ child.full_path() }}</a></li>
 {% endfor %}
 </ul>
 <h4>Containers</h4>
 <ul>
 {% for c in location.containers %}
-  <li><a href="/container/{{ c.code }}">{{ c.contents or c.code }}</a></li>
+  <li><a href="/container/{{ c.code }}">{{ c.name or c.code }}</a></li>
 {% endfor %}
 </ul>
 <h4>Items</h4>
