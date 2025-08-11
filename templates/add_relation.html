@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Register Pair</h2>
+<form method="post" class="mb-3">
+  <div class="mb-3">
+    <label class="form-label">Related Code</label>
+    <select class="form-select" name="code" required>
+      <optgroup label="Items">
+      {% for i in items %}
+        <option value="{{ i.code }}">📄 {{ i.name }} ({{ i.quantity }})</option>
+      {% endfor %}
+      </optgroup>
+      <optgroup label="Containers">
+      {% for c in containers %}
+        <option value="{{ c.code }}">📦 {{ c.name or c.code }}</option>
+      {% endfor %}
+      </optgroup>
+      <optgroup label="Locations">
+      {% for l in locations %}
+        <option value="{{ l.code }}">📍 {{ l.full_path() }}</option>
+      {% endfor %}
+      </optgroup>
+    </select>
+  </div>
+  <button class="btn btn-primary" type="submit">Register Pair</button>
+</form>
+{% endblock %}

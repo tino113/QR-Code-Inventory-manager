@@ -1,17 +1,43 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>System Log</h2>
+<form method="get" class="row g-2 mb-3">
+  <div class="col-auto">
+    <input type="date" name="start" class="form-control" value="{{ request.args.get('start','') }}" placeholder="Start">
+  </div>
+  <div class="col-auto">
+    <input type="date" name="end" class="form-control" value="{{ request.args.get('end','') }}" placeholder="End">
+  </div>
+  <div class="col-auto">
+    <select name="period" class="form-select">
+      <option value="">Period</option>
+      <option value="day" {% if request.args.get('period')=='day' %}selected{% endif %}>Last day</option>
+      <option value="week" {% if request.args.get('period')=='week' %}selected{% endif %}>Last week</option>
+      <option value="month" {% if request.args.get('period')=='month' %}selected{% endif %}>Last month</option>
+    </select>
+  </div>
+  <div class="col-auto">
+    <input type="text" name="action" class="form-control" value="{{ request.args.get('action','') }}" placeholder="Action type">
+  </div>
+  <div class="col-auto">
+    <input type="text" name="q" class="form-control" value="{{ request.args.get('q','') }}" placeholder="Search">
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-primary" type="submit">Filter</button>
+  </div>
+</form>
+<div class="table-responsive" style="max-height:400px; overflow-y:auto;">
 <table class="table table-sm">
-  <tr><th>Time</th><th>User</th><th>Action</th></tr>
+  <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
   {% for log in logs %}
   <tr>
-    <td>{{ log.timestamp }}</td>
+    <td><span class="timestamp" data-ts="{{ log.timestamp.isoformat() }}Z"></span></td>
     <td>{{ log.user.username if log.user else 'anon' }}</td>
-    <td>{{ log.action }}
-      {% if log.item %}- {{ log.item.name }}{% elif log.container %}- {{ log.container.name or log.container.code }}{% elif log.location %}- {{ log.location.name }}{% endif %}
-    </td>
+    <td>{{ log.action }}</td>
+    <td>{{ log.description|safe }}</td>
   </tr>
   {% endfor %}
 </table>
+</div>
 {% endblock %}
 
