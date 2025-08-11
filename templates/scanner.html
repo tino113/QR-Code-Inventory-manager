@@ -37,8 +37,8 @@ function beep(){
   setTimeout(()=>osc.stop(),150);
 }
 
-function start(cameraId){
-  html5QrCode.start(cameraId, {fps:10, qrbox:250}, onScanSuccess)
+function start(camera){
+  html5QrCode.start(camera, {fps:10, qrbox:250}, onScanSuccess)
     .catch(err => { console.error(err); });
 }
 
@@ -49,20 +49,25 @@ async function initCameras(){
     return;
   }
   try{
-    const stream = await navigator.mediaDevices.getUserMedia({video:true});
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
     stream.getTracks().forEach(t => t.stop());
     const cameras = await Html5Qrcode.getCameras();
-    cameras.forEach((cam, idx) => {
-      const opt = document.createElement('option');
-      opt.value = cam.id;
-      opt.text = cam.label || `Camera ${idx+1}`;
-      cameraSelect.appendChild(opt);
-    });
-    if(cameras.length <= 1){
+    if(cameras.length){
+      cameras.forEach((cam, idx) => {
+        const opt = document.createElement('option');
+        opt.value = cam.id;
+        opt.text = cam.label || `Camera ${idx+1}`;
+        cameraSelect.appendChild(opt);
+      });
+      if(cameras.length <= 1){
+        cameraSelect.style.display = 'none';
+      }
+      let preferred = cameras.find(c => /back|rear|environment/i.test(c.label)) || cameras[0];
+      cameraSelect.value = preferred.id;
+      start(preferred.id);
+    }else{
       cameraSelect.style.display = 'none';
-    }
-    if(cameras[0]){
-      start(cameras[0].id);
+      start({facingMode:'environment'});
     }
   }catch(err){
     console.error('Camera initialization failed', err);
@@ -86,13 +91,14 @@ function onScanSuccess(decodedText){
   lastScan = { code: decodedText, time: now };
 
   beep();
-  addLog(`Scanned ${decodedText}`);
 
   fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
     .then(r=>r.json()).then(data=>{
       const msg = document.getElementById('scan-message');
+      const nameHtml = data.name ? ` - <b>${data.name}</b>` : '';
+      addLog(`Scanned ${decodedText}${nameHtml}`);
       if(data.message){
-        msg.textContent = data.message;
+        msg.innerHTML = data.message;
         addLog(data.message);
         last = null;
       }else if(data.pending){
@@ -103,6 +109,8 @@ function onScanSuccess(decodedText){
             window.location = `/${data.type}/${data.code}`;
           }
         }, windowSlider.value * 1000);
+      }else if(data.error){
+        msg.textContent = data.error;
       }
     });
 }

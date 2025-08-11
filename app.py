@@ -539,11 +539,12 @@ def scan(code):
         session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
 
     if request.args.get('ajax'):
+        name = getattr(obj, 'name', None)
         if message:
-            return jsonify({'message': message})
+            return jsonify({'message': message, 'name': name})
         else:
             type_name = obj.__class__.__name__.lower()
-            return jsonify({'pending': True, 'type': type_name, 'code': obj.code})
+            return jsonify({'pending': True, 'type': type_name, 'code': obj.code, 'name': name})
 
     return render_template('scan.html', obj=obj, message=message)
 
@@ -561,14 +562,14 @@ def process_pair(first_code: str, second_code: str) -> str:
         first.updated_by = current_user()
         db.session.commit()
         log_action('item to container', item=first, container=second)
-        return f'Item {first.name} added to container.'
+        return f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
     if isinstance(first, Item) and isinstance(second, Location):
         first.location = second
         first.container = None
         first.updated_by = current_user()
         db.session.commit()
         log_action('item to location', item=first, location=second)
-        return f'Item {first.name} moved to location.'
+        return f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
     if isinstance(first, Container) and isinstance(second, Location):
         first.location = second
         first.updated_by = current_user()
@@ -580,7 +581,7 @@ def process_pair(first_code: str, second_code: str) -> str:
             db.session.add(History(item=it, location=second,
                                    user=current_user(), action='item to location'))
         db.session.commit()
-        return 'Container moved to location.'
+        return f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
     return 'No action for scanned pair.'
 
 

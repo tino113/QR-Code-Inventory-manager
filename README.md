@@ -45,7 +45,7 @@ Running `pytest -q` executes unit tests that cover item creation, splitting, sca
 
 1. Start the development server with `python app.py` and navigate to `http://localhost:5000/scanner` (or replace `localhost` with the host's IP) on a desktop or mobile browser. Browsers only allow camera access over HTTPS or from `localhost`.
 2. Allow the browser to access the camera. If multiple cameras are available,
-   choose one from the dropdown. A live viewfinder should appear.
-3. Scan a QR code. A short beep plays and the code is added to the on-page log with a timestamp.
+   choose one from the dropdown. A live viewfinder should appear. Mobile browsers default to the rear camera.
+3. Scan a QR code. A short beep plays and the code along with the item's name is added to the on-page log with a timestamp.
 4. Scanning the same QR code again within one second is ignored (no additional log entry), but different codes can be scanned immediately.
-5. When two different codes are scanned within the selected window, the application processes them as a pair and shows the result.
+5. When two different codes are scanned within the selected window, the application processes them as a pair, displays a verbose message (e.g., `Item <b>Chocolate</b> was moved to <b>Kitchen</b>`) and logs it.
