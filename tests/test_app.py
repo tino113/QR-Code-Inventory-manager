@@ -115,3 +115,59 @@ def test_missing_container_list():
     response = client.get('/')
     assert b'Box' in response.data
 
+
+def test_join_items():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        base = Item.query.filter_by(name='Hammer').first()
+        base_code = base.code
+        u = User.query.first()
+        extra = Item(name='Hammer', type='Tool', quantity=2, code='IT-extra',
+                     created_by=u, updated_by=u)
+        db.session.add(extra)
+        db.session.commit()
+        generate_qr('IT-extra')
+        extra_id = extra.id
+    client.post(f'/item/{base_code}/join', data={'items': str(extra_id)}, follow_redirects=True)
+    with app.app_context():
+        base = Item.query.filter_by(code=base_code).first()
+        extra = Item.query.filter_by(id=extra_id).first()
+        assert base.quantity == 4
+        assert extra is None
+
+
+def test_add_relation():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        item = Item.query.filter_by(name='Hammer').first()
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        item_code = item.code
+        loc_code = loc.code
+    client.post(f'/relation/add/item/{item_code}', data={'code': loc_code}, follow_redirects=True)
+    with app.app_context():
+        from app import Relation
+        item = Item.query.filter_by(code=item_code).first()
+        rel = Relation.query.filter_by(first_type='item', first_id=item.id, second_type='location').first()
+        assert rel is not None
+
+
+def test_location_unique_items():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        u = User.query.first()
+        cont = Container(name='Box2', code='CT-box2', created_by=u, updated_by=u, location=loc)
+        db.session.add(cont)
+        item = Item.query.filter_by(name='Hammer').first()
+        item.container = cont
+        item.location = None
+        db.session.commit()
+        loc_code = loc.code
+    with app.app_context():
+        loc = Location.query.filter_by(code=loc_code).first()
+        names = [i.name for i in loc.all_items() if i.name == 'Hammer']
+        assert len(names) == 1
+

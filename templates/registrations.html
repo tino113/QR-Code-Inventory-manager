@@ -7,7 +7,7 @@
     <select class="form-select" name="first" required>
       <optgroup label="Items">
       {% for i in items %}
-        <option value="{{ i.code }}">📄 {{ i.name }}</option>
+        <option value="{{ i.code }}">📄 {{ i.name }} ({{ i.quantity }})</option>
       {% endfor %}
       </optgroup>
       <optgroup label="Containers">
@@ -27,7 +27,7 @@
     <select class="form-select" name="second" required>
       <optgroup label="Items">
       {% for i in items %}
-        <option value="{{ i.code }}">📄 {{ i.name }}</option>
+        <option value="{{ i.code }}">📄 {{ i.name }} ({{ i.quantity }})</option>
       {% endfor %}
       </optgroup>
       <optgroup label="Containers">

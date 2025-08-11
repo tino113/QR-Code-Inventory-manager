@@ -8,14 +8,15 @@
 <a class="btn btn-secondary mb-3 d-block mx-auto" download href="{{ url_for('static', filename='qr/' + location.code + '.png') }}">Download QR</a>
 <table class="table table-sm mb-3">
   <tr><th>Code</th><td>{{ location.code }}</td></tr>
-  <tr><th>Created</th><td>{{ location.created_at }} by {{ location.created_by.username if location.created_by else 'n/a' }}</td></tr>
-  <tr><th>Updated</th><td>{{ location.updated_at }} by {{ location.updated_by.username if location.updated_by else 'n/a' }}</td></tr>
+  <tr><th>Created</th><td><span class="timestamp" data-ts="{{ location.created_at.isoformat() }}Z"></span> by {{ location.created_by.username if location.created_by else 'n/a' }}</td></tr>
+  <tr><th>Updated</th><td><span class="timestamp" data-ts="{{ location.updated_at.isoformat() }}Z"></span> by {{ location.updated_by.username if location.updated_by else 'n/a' }}</td></tr>
 </table>
 <div class="buttons-vertical">
   <a class="btn btn-info" href="/location/{{ location.code }}/edit">Edit</a>
   <form action="/location/{{ location.code }}/regen" method="post">
     <button class="btn btn-secondary w-100">New QR Code</button>
   </form>
+  <a class="btn btn-secondary" href="/relation/add/location/{{ location.code }}">Add Relation</a>
   <a class="btn btn-danger" href="/location/{{ location.code }}/delete" onclick="return confirm('Delete location?');">Delete</a>
 </div>
 {% if location.parent %}
@@ -59,5 +60,13 @@
     </div>
   </div>
 </div>
+{% if related %}
+<h4>Relations</h4>
+<ul>
+{% for r in related %}
+  <li><a href="{{ r.url }}">{{ r.name }}</a></li>
+{% endfor %}
+</ul>
+{% endif %}
 {% endblock %}
 

@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Join Items</h2>
+<form method="post">
+  {% for c in candidates %}
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" name="items" value="{{ c.id }}" id="item{{ c.id }}">
+    <label class="form-check-label" for="item{{ c.id }}">
+      {{ c.name }} ({{ c.quantity }}) - {{ c.code }}
+    </label>
+  </div>
+  {% endfor %}
+  <button class="btn btn-primary mt-3" type="submit">Join Selected</button>
+</form>
+{% endblock %}

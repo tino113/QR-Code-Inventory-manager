@@ -77,6 +77,16 @@ toggle.addEventListener('click',()=>{
 const saved=localStorage.getItem('theme')||'dark';
 setTheme(saved);
 </script>
+<script>
+const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
+document.querySelectorAll('.timestamp').forEach(el=>{
+  const ts=el.dataset.ts;
+  if(ts){
+    const d=new Date(ts);
+    el.textContent=d.toLocaleString([], {hour12:false})+' '+tz;
+  }
+});
+</script>
 </body>
 </html>
 

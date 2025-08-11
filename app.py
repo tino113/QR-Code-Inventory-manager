@@ -8,6 +8,7 @@ from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from sqlalchemy import or_, and_
 import qrcode
 import glob
 
@@ -67,12 +68,16 @@ class Location(db.Model, TimestampMixin):
         return self.name
 
     def all_items(self):
-        items = list(self.items)
+        seen = {}
+        for i in self.items:
+            seen[i.id] = i
         for c in self.containers:
-            items.extend(c.items)
+            for i in c.items:
+                seen[i.id] = i
         for child in self.children:
-            items.extend(child.all_items())
-        return items
+            for i in child.all_items():
+                seen[i.id] = i
+        return list(seen.values())
 
     def all_containers(self):
         conts = list(self.containers)
@@ -156,6 +161,14 @@ class History(db.Model):
     user = db.relationship('User', backref='histories')
 
 
+class Relation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    first_type = db.Column(db.String, nullable=False)
+    first_id = db.Column(db.Integer, nullable=False)
+    second_type = db.Column(db.String, nullable=False)
+    second_id = db.Column(db.Integer, nullable=False)
+
+
 def current_user():
     uid = session.get('user_id')
     if uid:
@@ -196,7 +209,7 @@ def setup_database():
         # issue simple selects to ensure all tables match the models;
         # missing columns will raise an OperationalError which triggers
         # a full rebuild of the schema
-        for model in (User, Location, Container, Item, History):
+        for model in (User, Location, Container, Item, History, Relation):
             db.session.query(model).first()
         ensure_admin()
     except Exception:
@@ -299,6 +312,12 @@ def log_action(action, item=None, container=None, location=None, description=Non
             description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> QR code regenerated"
         elif action == 'regenerated location code' and location:
             description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> QR code regenerated"
+        elif action == 'split' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was split"
+        elif action == 'split from' and item:
+            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was created from a split"
+        elif action == 'joined item' and item:
+            description = f"Items were joined into <b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b>"
         else:
             description = action
     h = History(action=action, description=description, item=item,
@@ -475,7 +494,7 @@ def admin_users():
         abort(403)
     if request.method == 'POST':
         if request.form.get('add'):
-            username = request.form['username'].title()
+            username = request.form['username']
             password = request.form['password']
             new_user = User(username=username)
             new_user.set_password(password)
@@ -489,7 +508,7 @@ def admin_users():
                 db.session.commit()
                 flash('User deleted', 'info')
             else:
-                target.username = request.form['username'].title()
+                target.username = request.form['username']
                 if request.form.get('password'):
                     target.set_password(request.form['password'])
                 db.session.commit()
@@ -526,19 +545,76 @@ def admin_ssl():
 @app.route('/item/<code>')
 def item_detail(code):
     item = Item.query.filter_by(code=code).first_or_404()
-    return render_template('item_detail.html', item=item)
+    rels = Relation.query.filter(or_(and_(Relation.first_type == 'item',
+                                         Relation.first_id == item.id),
+                                    and_(Relation.second_type == 'item',
+                                         Relation.second_id == item.id))).all()
+    related = []
+    for r in rels:
+        if r.first_type == 'item' and r.first_id == item.id:
+            ttype, tid = r.second_type, r.second_id
+        else:
+            ttype, tid = r.first_type, r.first_id
+        if ttype == 'item':
+            t = Item.query.get(tid)
+            related.append({'name': t.name, 'url': url_for('item_detail', code=t.code)})
+        elif ttype == 'container':
+            t = Container.query.get(tid)
+            related.append({'name': t.name or t.code, 'url': url_for('container_detail', code=t.code)})
+        else:
+            t = Location.query.get(tid)
+            related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
+    return render_template('item_detail.html', item=item, related=related)
 
 
 @app.route('/container/<code>')
 def container_detail(code):
     container = Container.query.filter_by(code=code).first_or_404()
-    return render_template('container_detail.html', container=container)
+    rels = Relation.query.filter(or_(and_(Relation.first_type == 'container',
+                                         Relation.first_id == container.id),
+                                    and_(Relation.second_type == 'container',
+                                         Relation.second_id == container.id))).all()
+    related = []
+    for r in rels:
+        if r.first_type == 'container' and r.first_id == container.id:
+            ttype, tid = r.second_type, r.second_id
+        else:
+            ttype, tid = r.first_type, r.first_id
+        if ttype == 'item':
+            t = Item.query.get(tid)
+            related.append({'name': t.name, 'url': url_for('item_detail', code=t.code)})
+        elif ttype == 'container':
+            t = Container.query.get(tid)
+            related.append({'name': t.name or t.code, 'url': url_for('container_detail', code=t.code)})
+        else:
+            t = Location.query.get(tid)
+            related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
+    return render_template('container_detail.html', container=container, related=related)
 
 
 @app.route('/location/<code>')
 def location_detail(code):
     location = Location.query.filter_by(code=code).first_or_404()
-    return render_template('location_detail.html', location=location)
+    rels = Relation.query.filter(or_(and_(Relation.first_type == 'location',
+                                         Relation.first_id == location.id),
+                                    and_(Relation.second_type == 'location',
+                                         Relation.second_id == location.id))).all()
+    related = []
+    for r in rels:
+        if r.first_type == 'location' and r.first_id == location.id:
+            ttype, tid = r.second_type, r.second_id
+        else:
+            ttype, tid = r.first_type, r.first_id
+        if ttype == 'item':
+            t = Item.query.get(tid)
+            related.append({'name': t.name, 'url': url_for('item_detail', code=t.code)})
+        elif ttype == 'container':
+            t = Container.query.get(tid)
+            related.append({'name': t.name or t.code, 'url': url_for('container_detail', code=t.code)})
+        else:
+            t = Location.query.get(tid)
+            related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
+    return render_template('location_detail.html', location=location, related=related)
 
 
 @app.route('/add/item', methods=['GET', 'POST'])
@@ -864,6 +940,36 @@ def registrations():
     return render_template('registrations.html', items=items, containers=containers, locations=locations, message=message)
 
 
+@app.route('/relation/add/<etype>/<code>', methods=['GET', 'POST'])
+def add_relation(etype, code):
+    obj = (Item.query.filter_by(code=code).first() or
+           Container.query.filter_by(code=code).first() or
+           Location.query.filter_by(code=code).first_or_404())
+    items = Item.query.all()
+    containers = Container.query.all()
+    locations = Location.query.all()
+    if request.method == 'POST':
+        tcode = request.form['code']
+        target = (Item.query.filter_by(code=tcode).first() or
+                  Container.query.filter_by(code=tcode).first() or
+                  Location.query.filter_by(code=tcode).first())
+        if target:
+            if isinstance(target, Item):
+                ttype = 'item'
+            elif isinstance(target, Container):
+                ttype = 'container'
+            else:
+                ttype = 'location'
+            rel = Relation(first_type=etype, first_id=obj.id,
+                           second_type=ttype, second_id=target.id)
+            db.session.add(rel)
+            db.session.commit()
+            flash('Relation added', 'info')
+            return redirect(url_for(f'{etype}_detail', code=code))
+    return render_template('add_relation.html', etype=etype, obj=obj,
+                           items=items, containers=containers, locations=locations)
+
+
 @app.route('/item/<code>/split', methods=['GET', 'POST'])
 def split_item(code):
     item = Item.query.filter_by(code=code).first_or_404()
@@ -878,13 +984,36 @@ def split_item(code):
                             code=new_code, image=img,
                             created_by=current_user(), updated_by=current_user())
             db.session.add(new_item)
-            db.session.add(History(item=item, action='split', user=current_user()))
-            db.session.add(History(item=new_item, action='split from',
-                                   user=current_user()))
             db.session.commit()
             generate_qr(new_code)
+            log_action('split', item=item,
+                       description=(f"<a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was split; "
+                                    f"<a href='{url_for('item_detail', code=new_item.code)}'><b>{new_item.name}</b></a> created with {qty}"))
+            log_action('split from', item=new_item,
+                       description=(f"<a href='{url_for('item_detail', code=new_item.code)}'><b>{new_item.name}</b></a> came from "
+                                    f"<a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a>"))
             return redirect(url_for('item_detail', code=code))
     return render_template('split_item.html', item=item)
+
+
+@app.route('/item/<code>/join', methods=['GET', 'POST'])
+def join_item(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    candidates = Item.query.filter_by(name=item.name).filter(Item.id != item.id).all()
+    if request.method == 'POST':
+        selected = request.form.getlist('items')
+        for sid in selected:
+            other = Item.query.get(int(sid))
+            if other:
+                item.quantity += other.quantity
+                log_action('joined item', item=item,
+                           description=(f"<a href='{url_for('item_detail', code=other.code)}'><b>{other.name}</b></a> joined into "
+                                        f"<a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a>"))
+                db.session.delete(other)
+        item.updated_by = current_user()
+        db.session.commit()
+        return redirect(url_for('item_detail', code=code))
+    return render_template('join_item.html', item=item, candidates=candidates)
 
 
 @app.route('/item/<code>/remove')
