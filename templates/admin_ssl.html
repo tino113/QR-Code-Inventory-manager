@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>SSL Configuration</h2>
+<p>Upload your SSL certificate and key. Accepted formats include <code>.pem</code>, <code>.crt</code> and <code>.key</code>.</p>
+<form method="post" enctype="multipart/form-data">
+  <div class="mb-3">
+    <label class="form-label">Certificate File</label>
+    <input type="file" name="cert" class="form-control">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Key File</label>
+    <input type="file" name="key" class="form-control">
+  </div>
+  <button class="btn btn-primary" type="submit">Upload</button>
+</form>
+{% endblock %}

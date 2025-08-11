@@ -26,12 +26,12 @@
     <button class="btn btn-primary" type="submit">Filter</button>
   </div>
 </form>
-<div style="max-height:400px; overflow-y:auto;">
+<div class="table-responsive" style="max-height:400px; overflow-y:auto;">
 <table class="table table-sm">
   <tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr>
   {% for log in logs %}
   <tr>
-    <td>{{ log.timestamp }}</td>
+    <td><span class="timestamp" data-ts="{{ log.timestamp.isoformat() }}Z"></span></td>
     <td>{{ log.user.username if log.user else 'anon' }}</td>
     <td>{{ log.action }}</td>
     <td>{{ log.description|safe }}</td>

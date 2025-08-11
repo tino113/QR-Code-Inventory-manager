@@ -8,6 +8,16 @@ body.dark {
   color: #e0e0e0;
 }
 
+body {
+  font-size: 1rem;
+}
+
+@media (max-width: 576px) {
+  body {
+    font-size: 1.1rem;
+  }
+}
+
 
 :root {
   --accent: #ffeb3b;
@@ -15,6 +25,20 @@ body.dark {
 
 a:not(.btn) { color: var(--accent); }
 .nav-link, .navbar-brand { color: var(--accent) !important; }
+
+.accordion-button {
+  --bs-accordion-btn-icon-color: var(--accent);
+  --bs-accordion-btn-active-icon-color: var(--accent);
+}
+
+.accordion-button:not(.collapsed) {
+  background-color: var(--accent);
+  color: #000;
+}
+
+body.light .accordion-button:not(.collapsed) {
+  color: #fff;
+}
 
 .btn { color: #000 !important; }
 .btn-link { color: var(--accent) !important; }
