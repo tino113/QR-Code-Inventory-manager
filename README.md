@@ -17,6 +17,19 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
+### 1.1 Linux / Raspbian OS deps
+install the following for Linux / Raspbian OS / Debian installations
+#### Deps for pillow
+``` bash
+sudo apt update
+sudo apt install libjpeg-dev zlib1g-dev libtiff-dev libfreetype6-dev
+```
+
+#### Dependancies for cryptography
+``` bash
+sudo apt-get install libffi-dev
+```
+
 ### 2. Install dependencies
 ```bash
 pip install -r requirements.txt
