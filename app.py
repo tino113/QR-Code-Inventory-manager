@@ -41,6 +41,7 @@ class User(db.Model):
     image = db.Column(db.String)
     theme_light = db.Column(db.String, default='#800080')
     theme_dark = db.Column(db.String, default='#ffeb3b')
+    is_admin = db.Column(db.Boolean, default=False)
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -202,9 +203,10 @@ def require_login():
         return redirect(url_for('login'))
 
 def ensure_admin():
-    if not User.query.filter_by(username='admin').first():
+    if not User.query.filter_by(is_admin=True).first():
         admin = User(username='admin', must_change=True,
-                     theme_light='#800080', theme_dark='#ffeb3b')
+                     theme_light='#800080', theme_dark='#ffeb3b',
+                     is_admin=True)
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
@@ -260,12 +262,13 @@ def generate_pdf(codes, path, cols=4, rows=8):
     """Create a simple A4 PDF grid of QR codes."""
     width, height = 2480, 3508  # A4 at 300 DPI
     page = Image.new('RGB', (width, height), 'white')
-    cell_w = width // cols
-    cell_h = height // rows
+    side = min(width // cols, height // rows)
+    margin_x = (width - side * cols) // 2
+    margin_y = (height - side * rows) // 2
     for idx, code in enumerate(codes):
-        img = Image.open(qr_path(code)).resize((cell_w, cell_h))
-        x = (idx % cols) * cell_w
-        y = (idx // cols) * cell_h
+        img = Image.open(qr_path(code)).resize((side, side))
+        x = margin_x + (idx % cols) * side
+        y = margin_y + (idx // cols) * side
         page.paste(img, (x, y))
     page.save(path, 'PDF', resolution=300.0)
 
@@ -515,7 +518,7 @@ def account():
 def logs():
     user = current_user()
     q = History.query.outerjoin(Item).outerjoin(Container).outerjoin(Location)
-    if user.username != 'admin':
+    if not user.is_admin:
         q = q.filter(History.user_id == user.id)
 
     start = request.args.get('start')
@@ -556,16 +559,43 @@ def logs():
     return render_template('admin_log.html', logs=logs)
 
 
+@app.route('/admin/summary')
+def admin_summary():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    items_count = Item.query.count()
+    containers_count = Container.query.count()
+    locations_count = Location.query.count()
+    items_by_location = (db.session.query(Location, db.func.count(Item.id))
+                         .outerjoin(Item)
+                         .group_by(Location.id).all())
+    items_by_type = db.session.query(Item.type, db.func.count(Item.id)).group_by(Item.type).all()
+    moves = (History.query.filter(History.action.in_([
+                'item to container', 'item to location', 'container to location']))
+             .order_by(History.timestamp.desc()).limit(20).all())
+    activities = History.query.order_by(History.timestamp.desc()).limit(20).all()
+    logins = (History.query.filter_by(action='user logged in')
+              .order_by(History.timestamp.desc()).limit(20).all())
+    return render_template('admin_summary.html', items_count=items_count,
+                           containers_count=containers_count,
+                           locations_count=locations_count,
+                           items_by_location=items_by_location,
+                           items_by_type=items_by_type,
+                           moves=moves, activities=activities, logins=logins)
+
+
 @app.route('/admin/users', methods=['GET', 'POST'])
 def admin_users():
     user = current_user()
-    if not user or user.username != 'admin':
+    if not user or not user.is_admin:
         abort(403)
     if request.method == 'POST':
         if request.form.get('add'):
             username = request.form['username']
             password = request.form['password']
-            new_user = User(username=username)
+            is_admin = bool(request.form.get('is_admin'))
+            new_user = User(username=username, is_admin=is_admin)
             new_user.set_password(password)
             db.session.add(new_user)
             db.session.commit()
@@ -573,15 +603,23 @@ def admin_users():
         else:
             target = User.query.get_or_404(int(request.form['user_id']))
             if request.form.get('delete'):
-                db.session.delete(target)
-                db.session.commit()
-                flash('User deleted', 'info')
+                if target.is_admin and User.query.filter(User.is_admin, User.id != target.id).count() == 0:
+                    flash('Must have at least one admin', 'danger')
+                else:
+                    db.session.delete(target)
+                    db.session.commit()
+                    flash('User deleted', 'info')
             else:
                 target.username = request.form['username']
                 if request.form.get('password'):
                     target.set_password(request.form['password'])
-                db.session.commit()
-                flash('User updated', 'info')
+                new_admin = bool(request.form.get('is_admin'))
+                if not new_admin and target.is_admin and User.query.filter(User.is_admin, User.id != target.id).count() == 0:
+                    flash('Must have at least one admin', 'danger')
+                else:
+                    target.is_admin = new_admin
+                    db.session.commit()
+                    flash('User updated', 'info')
         return redirect(url_for('admin_users'))
     users = User.query.all()
     return render_template('admin_users.html', users=users)
@@ -590,7 +628,7 @@ def admin_users():
 @app.route('/admin/ssl', methods=['GET', 'POST'])
 def admin_ssl():
     user = current_user()
-    if not user or user.username != 'admin':
+    if not user or not user.is_admin:
         abort(403)
     if request.method == 'POST':
         cert = request.files.get('cert')

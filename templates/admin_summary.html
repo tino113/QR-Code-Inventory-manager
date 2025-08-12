@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Admin Summary</h2>
+<div class="row mb-3">
+  <div class="col">Items: <b>{{ items_count }}</b></div>
+  <div class="col">Containers: <b>{{ containers_count }}</b></div>
+  <div class="col">Locations: <b>{{ locations_count }}</b></div>
+</div>
+<h4>Items per Location</h4>
+<table class="table table-sm">
+  <tr><th>Location</th><th>Items</th></tr>
+  {% for loc, count in items_by_location %}
+  <tr><td>{{ loc.full_path() }}</td><td>{{ count }}</td></tr>
+  {% endfor %}
+</table>
+<h4>Items by Type</h4>
+<table class="table table-sm">
+  <tr><th>Type</th><th>Count</th></tr>
+  {% for type, count in items_by_type %}
+  <tr><td>{{ type }}</td><td>{{ count }}</td></tr>
+  {% endfor %}
+</table>
+<h4>Recent Moves</h4>
+<ul class="list-group mb-3">
+  {% for h in moves %}
+  <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}"></span> - {{ h.description|safe }}</li>
+  {% endfor %}
+</ul>
+<h4>Recent User Activities</h4>
+<ul class="list-group mb-3">
+  {% for h in activities %}
+  <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}"></span> - {{ h.user.username if h.user else 'system' }} - {{ h.action }}</li>
+  {% endfor %}
+</ul>
+<h4>Recent Logins</h4>
+<ul class="list-group">
+  {% for h in logins %}
+  <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}"></span> - {{ h.user.username if h.user else '' }}</li>
+  {% endfor %}
+</ul>
+{% endblock %}

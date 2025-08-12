@@ -129,17 +129,17 @@ function handleScan(decodedText){
         const prefix = decodedText.split('-')[0];
         const typeMap = { 'IT':'item', 'CT':'container', 'LC':'location' };
         let t = typeMap[prefix];
-        if(!t){
-          const choice = prompt('Unknown code. Create item (i), container (c), or location (l)?');
-          if(!choice) return;
-          const ch = choice.trim().toLowerCase();
-          if(ch.startsWith('i')) t='item';
-          else if(ch.startsWith('c')) t='container';
-          else if(ch.startsWith('l')) t='location';
-          else return;
+        if(t){
+          window.location = `/add/${t}?code=${decodedText}`;
+        }else{
+          const msgDiv = document.getElementById('scan-message');
+          msgDiv.innerHTML = `Unknown code. Add as:<div class="mt-2">`
+            + `<button class=\"btn btn-sm btn-secondary me-2\" onclick=\"location='/add/item?code=${decodedText}'\">Item</button>`
+            + `<button class=\"btn btn-sm btn-secondary me-2\" onclick=\"location='/add/container?code=${decodedText}'\">Container</button>`
+            + `<button class=\"btn btn-sm btn-secondary\" onclick=\"location='/add/location?code=${decodedText}'\">Location</button>`
+            + `</div>`;
         }
-        window.location = `/add/${t}?code=${decodedText}`;
-      }
+        }
     });
 }
 
