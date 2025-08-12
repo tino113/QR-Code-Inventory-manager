@@ -11,15 +11,25 @@ A Flask-based web application for tracking items, containers and locations using
 
 ## Getting Started
 
+### installing python version 3.13 for Linux
+Firstly ensure that sqlite3 is installed on the system BEFORE building python:
+``` bash
+sudo apt-get install libsqlite3-dev
+```
+then use pyenv to install python 3.13
+```
+pyenv install 3.13.0
+```
+
 ### 1. Setup a virtual environment
 ```bash
-python -m venv .venv
+python3.13.0 -m venv .venv
 source .venv/bin/activate
 ```
 
 ### 1.1 Linux / Raspbian OS deps
 install the following for Linux / Raspbian OS / Debian installations
-#### Deps for pillow
+#### Dependancies for pillow
 ``` bash
 sudo apt update
 sudo apt install libjpeg-dev zlib1g-dev libtiff-dev libfreetype6-dev
