@@ -11,6 +11,11 @@ from werkzeug.utils import secure_filename
 from sqlalchemy import or_, and_
 import qrcode
 import glob
+import json
+import zipfile
+from PIL import Image
+import math
+from difflib import SequenceMatcher
 
 
 app = Flask(__name__)
@@ -38,6 +43,7 @@ class User(db.Model):
     image = db.Column(db.String)
     theme_light = db.Column(db.String, default='#800080')
     theme_dark = db.Column(db.String, default='#ffeb3b')
+    is_admin = db.Column(db.Boolean, default=False)
 
     def set_password(self, password: str):
         self.password_hash = generate_password_hash(password)
@@ -53,6 +59,7 @@ class Location(db.Model, TimestampMixin):
     parent_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     parent = db.relationship('Location', remote_side=[id], backref='children')
     image = db.Column(db.String)
+    custom_data = db.Column(db.Text)
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_by = db.relationship('User', foreign_keys=[created_by_id])
@@ -94,6 +101,7 @@ class Container(db.Model, TimestampMixin):
     color = db.Column(db.String)
     image = db.Column(db.String)
     missing = db.Column(db.Boolean, default=False)
+    custom_data = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -119,6 +127,7 @@ class Item(db.Model, TimestampMixin):
     quantity = db.Column(db.Integer, nullable=False)
     image = db.Column(db.String)
     missing = db.Column(db.Boolean, default=False)
+    custom_data = db.Column(db.Text)
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -182,11 +191,13 @@ def inject_user():
 
 
 @app.before_request
+@app.before_request
 def enforce_https():
     if (not request.is_secure and
+            request.headers.get('X-Forwarded-Proto', 'http') != 'https' and
             request.host.split(':')[0] not in ('localhost', '127.0.0.1')):
         url = request.url.replace('http://', 'https://', 1)
-        return redirect(url)
+        return redirect(url, code=301)
 
 
 @app.before_request
@@ -196,9 +207,10 @@ def require_login():
         return redirect(url_for('login'))
 
 def ensure_admin():
-    if not User.query.filter_by(username='admin').first():
+    if not User.query.filter_by(is_admin=True).first():
         admin = User(username='admin', must_change=True,
-                     theme_light='#800080', theme_dark='#ffeb3b')
+                     theme_light='#800080', theme_dark='#ffeb3b',
+                     is_admin=True)
         admin.set_password('admin')
         db.session.add(admin)
         db.session.commit()
@@ -223,7 +235,20 @@ with app.app_context():
 
 
 def generate_code(prefix: str) -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+    """Generate a unique code with the given prefix.
+
+    The function ensures the generated code is not already associated with
+    any existing item, container or location and that no QR image exists for
+    it yet. This prevents accidental reuse of codes when generating batches of
+    QR codes."""
+    while True:
+        code = f"{prefix}-{uuid.uuid4().hex[:8]}"
+        exists = (Item.query.filter_by(code=code).first() or
+                  Container.query.filter_by(code=code).first() or
+                  Location.query.filter_by(code=code).first())
+        if exists or os.path.exists(qr_path(code)):
+            continue
+        return code
 
 
 def qr_path(code: str) -> str:
@@ -235,6 +260,85 @@ def generate_qr(code: str):
     path = qr_path(code)
     img.save(path)
     return path
+
+
+def _qr_pages(codes, cols, rows):
+    """Return PIL Images containing grids of codes."""
+    width, height = 2480, 3508  # A4 at 300 DPI
+    margin = 100  # small margin for printers
+    side = min((width - margin * 2) // cols,
+               (height - margin * 2) // rows)
+    margin_x = (width - side * cols) // 2
+    margin_y = (height - side * rows) // 2
+    per_page = cols * rows
+    pages = []
+    for page_idx in range(math.ceil(len(codes) / per_page)):
+        page = Image.new('RGB', (width, height), 'white')
+        for cell in range(per_page):
+            idx = page_idx * per_page + cell
+            if idx >= len(codes):
+                break
+            img = Image.open(qr_path(codes[idx])).resize((side, side))
+            x = margin_x + (cell % cols) * side
+            y = margin_y + (cell // cols) * side
+            page.paste(img, (x, y))
+        pages.append(page)
+    return pages
+
+
+def generate_pdf(codes, path, cols=4, rows=8):
+    pages = _qr_pages(codes, cols, rows)
+    if not pages:
+        return
+    pages[0].save(path, 'PDF', resolution=300.0,
+                  save_all=True, append_images=pages[1:])
+
+
+def generate_images(codes, base_path, cols=4, rows=8):
+    """Generate A4-sized PNG pages and return their paths."""
+    pages = _qr_pages(codes, cols, rows)
+    files = []
+    for i, page in enumerate(pages, 1):
+        fname = f"{base_path}_{i}.png"
+        page.save(fname, 'PNG')
+        files.append(fname)
+    return files
+
+
+def parse_custom_data(data_str):
+    if not data_str:
+        return None
+    try:
+        obj = json.loads(data_str)
+    except Exception:
+        obj = {}
+        for line in data_str.splitlines():
+            if ':' in line:
+                k, v = line.split(':', 1)
+            elif '=' in line:
+                k, v = line.split('=', 1)
+            else:
+                continue
+            obj[k.strip()] = v.strip()
+    return json.dumps(obj)
+
+
+def reassign_code(code):
+    existing = (Item.query.filter_by(code=code).first() or
+                Container.query.filter_by(code=code).first() or
+                Location.query.filter_by(code=code).first())
+    if existing:
+        prefix = existing.code.split('-')[0]
+        new_code = generate_code(prefix)
+        old_qr = qr_path(existing.code)
+        existing.code = new_code
+        db.session.commit()
+        if os.path.exists(old_qr):
+            os.remove(old_qr)
+        generate_qr(new_code)
+        log_action('regenerated code', item=existing if isinstance(existing, Item) else None,
+                   container=existing if isinstance(existing, Container) else None,
+                   location=existing if isinstance(existing, Location) else None)
 
 
 def save_image(file, code: str):
@@ -329,32 +433,74 @@ def log_action(action, item=None, container=None, location=None, description=Non
 @app.route('/')
 def index():
     q = request.args.get('q', '')
-    item_query = Item.query
-    if request.args.get('name'):
-        item_query = item_query.filter(Item.name.contains(request.args['name']))
-    if request.args.get('type'):
-        item_query = item_query.filter(Item.type.contains(request.args['type']))
-    if request.args.get('location'):
-        item_query = item_query.filter_by(location_id=request.args['location'])
-    if request.args.get('container'):
-        item_query = item_query.filter_by(container_id=request.args['container'])
-    if request.args.get('quantity'):
-        item_query = item_query.filter_by(quantity=request.args['quantity'])
-    items = item_query.all()
+
+    def apply_filters(base_query):
+        if request.args.get('name'):
+            base_query = base_query.filter(Item.name.contains(request.args['name']))
+        if request.args.get('type'):
+            base_query = base_query.filter(Item.type.contains(request.args['type']))
+        if request.args.get('location'):
+            base_query = base_query.filter_by(location_id=request.args['location'])
+        if request.args.get('container'):
+            base_query = base_query.filter_by(container_id=request.args['container'])
+        if request.args.get('quantity'):
+            base_query = base_query.filter_by(quantity=request.args['quantity'])
+        return base_query
+
+    items = apply_filters(Item.query).all()
 
     all_containers = Container.query.all()
     all_locations = Location.query.all()
     containers = all_containers
     locations = all_locations
+
+    unaccounted = apply_filters(Item.query.filter_by(container_id=None, location_id=None, missing=False)).all()
+    missing_items = apply_filters(Item.query.filter_by(missing=True)).all()
+    missing_containers = Container.query.filter_by(missing=True).all()
+
+    def item_match(i, needle):
+        data = ''
+        if i.custom_data:
+            try:
+                data = json.dumps(json.loads(i.custom_data))
+            except Exception:
+                data = i.custom_data
+        fields = [i.name or '', i.type or '', str(i.quantity), i.code, data]
+        if i.location:
+            fields.append(i.location.full_path())
+        if i.container and i.container.name:
+            fields.append(i.container.name)
+        return any(_fuzzy_match(f, needle) for f in fields)
+
+    def container_match(c, needle):
+        data = ''
+        if c.custom_data:
+            try:
+                data = json.dumps(json.loads(c.custom_data))
+            except Exception:
+                data = c.custom_data
+        fields = [c.name or '', c.size or '', c.color or '', c.code, data]
+        return any(_fuzzy_match(f, needle) for f in fields)
+
+    def location_match(l, needle):
+        data = ''
+        if l.custom_data:
+            try:
+                data = json.dumps(json.loads(l.custom_data))
+            except Exception:
+                data = l.custom_data
+        fields = [l.full_path(), l.code, data]
+        return any(_fuzzy_match(f, needle) for f in fields)
+
     if q:
         ql = q.lower()
-        items = [i for i in items if ql in i.name.lower() or ql in i.type.lower() or ql in str(i.quantity) or (i.location and ql in i.location.full_path().lower()) or (i.container and i.container.name and ql in i.container.name.lower())]
-        containers = [c for c in containers if (c.name and ql in c.name.lower()) or (c.size and ql in c.size.lower()) or (c.color and ql in c.color.lower())]
-        locations = [l for l in locations if ql in l.full_path().lower()]
+        items = [i for i in items if item_match(i, ql)]
+        containers = [c for c in containers if container_match(c, ql)]
+        locations = [l for l in locations if location_match(l, ql)]
+        unaccounted = [i for i in unaccounted if item_match(i, ql)]
+        missing_items = [i for i in missing_items if item_match(i, ql)]
+        missing_containers = [c for c in missing_containers if container_match(c, ql)]
 
-    unaccounted = Item.query.filter_by(container_id=None, location_id=None, missing=False).all()
-    missing_items = Item.query.filter_by(missing=True).all()
-    missing_containers = Container.query.filter_by(missing=True).all()
     return render_template('index.html', items=items, containers=containers,
                            locations=locations, unaccounted=unaccounted,
                            missing_items=missing_items,
@@ -446,7 +592,7 @@ def account():
 def logs():
     user = current_user()
     q = History.query.outerjoin(Item).outerjoin(Container).outerjoin(Location)
-    if user.username != 'admin':
+    if not user.is_admin:
         q = q.filter(History.user_id == user.id)
 
     start = request.args.get('start')
@@ -487,16 +633,91 @@ def logs():
     return render_template('admin_log.html', logs=logs)
 
 
+@app.route('/admin/summary')
+def admin_summary():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    items_count = Item.query.count()
+    containers_count = Container.query.count()
+    locations_count = Location.query.count()
+    range_key = request.args.get('range')
+    start = request.args.get('start')
+    end = request.args.get('end')
+    today = dt.date.today()
+    if range_key:
+        if range_key == 'today':
+            start = end = today.isoformat()
+        elif range_key == 'yesterday':
+            d = today - dt.timedelta(days=1)
+            start = end = d.isoformat()
+        elif range_key == 'this_week':
+            start = (today - dt.timedelta(days=today.weekday())).isoformat()
+            end = today.isoformat()
+        elif range_key == 'last_week':
+            end_date = today - dt.timedelta(days=today.weekday() + 1)
+            start_date = end_date - dt.timedelta(days=6)
+            start, end = start_date.isoformat(), end_date.isoformat()
+        elif range_key == 'this_month':
+            start = today.replace(day=1).isoformat()
+            end = today.isoformat()
+        elif range_key == 'last_month':
+            first_this = today.replace(day=1)
+            last_month_end = first_this - dt.timedelta(days=1)
+            start = last_month_end.replace(day=1).isoformat()
+            end = last_month_end.isoformat()
+        elif range_key == 'this_year':
+            start = today.replace(month=1, day=1).isoformat()
+            end = today.isoformat()
+        elif range_key == 'last_year':
+            last_year = today.year - 1
+            start = dt.date(last_year, 1, 1).isoformat()
+            end = dt.date(last_year, 12, 31).isoformat()
+        elif range_key == 'all':
+            start = end = None
+
+    start_dt = dt.datetime.fromisoformat(start) if start else None
+    end_dt = dt.datetime.fromisoformat(end) if end else None
+    if end_dt:
+        end_dt = end_dt.replace(hour=23, minute=59, second=59)
+
+    def in_range(query):
+        if start_dt:
+            query = query.filter(History.timestamp >= start_dt)
+        if end_dt:
+            query = query.filter(History.timestamp <= end_dt)
+        return query
+
+    items_by_location = (db.session.query(Location, db.func.count(Item.id))
+                         .outerjoin(Item)
+                         .group_by(Location.id).all())
+    items_by_type = db.session.query(Item.type, db.func.count(Item.id)).group_by(Item.type).all()
+    moves = (in_range(History.query.filter(History.action.in_([
+                'item to container', 'item to location', 'container to location'])))
+             .order_by(History.timestamp.desc()).limit(20).all())
+    activities = in_range(History.query).order_by(History.timestamp.desc()).limit(20).all()
+    logins = (in_range(History.query.filter_by(action='user logged in'))
+              .order_by(History.timestamp.desc()).limit(20).all())
+    return render_template('admin_summary.html', items_count=items_count,
+                           containers_count=containers_count,
+                           locations_count=locations_count,
+                           items_by_location=items_by_location,
+                           items_by_type=items_by_type,
+                           moves=moves, activities=activities, logins=logins,
+                           start=start, end=end)
+
+
 @app.route('/admin/users', methods=['GET', 'POST'])
 def admin_users():
     user = current_user()
-    if not user or user.username != 'admin':
+    if not user or not user.is_admin:
         abort(403)
     if request.method == 'POST':
         if request.form.get('add'):
             username = request.form['username']
             password = request.form['password']
-            new_user = User(username=username)
+            is_admin = bool(request.form.get('is_admin'))
+            new_user = User(username=username, is_admin=is_admin)
             new_user.set_password(password)
             db.session.add(new_user)
             db.session.commit()
@@ -504,15 +725,23 @@ def admin_users():
         else:
             target = User.query.get_or_404(int(request.form['user_id']))
             if request.form.get('delete'):
-                db.session.delete(target)
-                db.session.commit()
-                flash('User deleted', 'info')
+                if target.is_admin and User.query.filter(User.is_admin, User.id != target.id).count() == 0:
+                    flash('Must have at least one admin', 'danger')
+                else:
+                    db.session.delete(target)
+                    db.session.commit()
+                    flash('User deleted', 'info')
             else:
                 target.username = request.form['username']
                 if request.form.get('password'):
                     target.set_password(request.form['password'])
-                db.session.commit()
-                flash('User updated', 'info')
+                new_admin = bool(request.form.get('is_admin'))
+                if not new_admin and target.is_admin and User.query.filter(User.is_admin, User.id != target.id).count() == 0:
+                    flash('Must have at least one admin', 'danger')
+                else:
+                    target.is_admin = new_admin
+                    db.session.commit()
+                    flash('User updated', 'info')
         return redirect(url_for('admin_users'))
     users = User.query.all()
     return render_template('admin_users.html', users=users)
@@ -521,7 +750,7 @@ def admin_users():
 @app.route('/admin/ssl', methods=['GET', 'POST'])
 def admin_ssl():
     user = current_user()
-    if not user or user.username != 'admin':
+    if not user or not user.is_admin:
         abort(403)
     if request.method == 'POST':
         cert = request.files.get('cert')
@@ -564,7 +793,8 @@ def item_detail(code):
         else:
             t = Location.query.get(tid)
             related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
-    return render_template('item_detail.html', item=item, related=related)
+    data = json.loads(item.custom_data) if item.custom_data else {}
+    return render_template('item_detail.html', item=item, related=related, custom_data=data)
 
 
 @app.route('/container/<code>')
@@ -589,7 +819,8 @@ def container_detail(code):
         else:
             t = Location.query.get(tid)
             related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
-    return render_template('container_detail.html', container=container, related=related)
+    data = json.loads(container.custom_data) if container.custom_data else {}
+    return render_template('container_detail.html', container=container, related=related, custom_data=data)
 
 
 @app.route('/location/<code>')
@@ -614,7 +845,8 @@ def location_detail(code):
         else:
             t = Location.query.get(tid)
             related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
-    return render_template('location_detail.html', location=location, related=related)
+    data = json.loads(location.custom_data) if location.custom_data else {}
+    return render_template('location_detail.html', location=location, related=related, custom_data=data)
 
 
 @app.route('/add/item', methods=['GET', 'POST'])
@@ -623,10 +855,16 @@ def add_item():
         name = request.form['name'].title()
         type_ = request.form['type'].title()
         quantity = int(request.form['quantity'])
-        code = generate_code('IT')
+        code = request.form.get('code') or generate_code('IT')
+        if request.form.get('code'):
+            reassign_code(code)
         img = save_image(request.files.get('image'), code)
+        custom_data = parse_custom_data(request.form.get('custom_data'))
+        location_id = request.form.get('location')
+        location = Location.query.get(location_id) if location_id else None
         existing = Item.query.filter(db.func.lower(Item.name) == name.lower()).first()
         item = Item(name=name, type=type_, quantity=quantity, code=code, image=img,
+                    custom_data=custom_data, location=location,
                     created_by=current_user(), updated_by=current_user())
         db.session.add(item)
         db.session.commit()
@@ -642,7 +880,10 @@ def add_item():
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
-    return render_template('add_item.html', names=names, types=types)
+    locations = Location.query.all()
+    return render_template('add_item.html', names=names, types=types,
+                           locations=locations, edit=False,
+                           code=request.args.get('code'))
 
 
 @app.route('/add/container', methods=['GET', 'POST'])
@@ -651,10 +892,16 @@ def add_container():
         name = request.form['name'].title()
         size = request.form['size'].title()
         color = request.form['color'].title()
-        code = generate_code('CT')
+        code = request.form.get('code') or generate_code('CT')
+        if request.form.get('code'):
+            reassign_code(code)
         img = save_image(request.files.get('image'), code)
+        custom_data = parse_custom_data(request.form.get('custom_data'))
+        location_id = request.form.get('location')
+        location = Location.query.get(location_id) if location_id else None
         container = Container(name=name, size=size, color=color,
                               code=code, image=img,
+                              custom_data=custom_data, location=location,
                               created_by=current_user(), updated_by=current_user())
         db.session.add(container)
         db.session.commit()
@@ -663,7 +910,10 @@ def add_container():
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
     colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
-    return render_template('add_container.html', sizes=sizes, colors=colors)
+    locations = Location.query.all()
+    return render_template('add_container.html', sizes=sizes, colors=colors,
+                           locations=locations, edit=False,
+                           code=request.args.get('code'))
 
 
 @app.route('/add/location', methods=['GET', 'POST'])
@@ -672,9 +922,13 @@ def add_location():
     if request.method == 'POST':
         name = request.form['name'].title()
         parent_id = request.form.get('parent_id') or None
-        code = generate_code('LC')
+        code = request.form.get('code') or generate_code('LC')
+        if request.form.get('code'):
+            reassign_code(code)
         img = save_image(request.files.get('image'), code)
+        custom_data = parse_custom_data(request.form.get('custom_data'))
         location = Location(name=name, parent_id=parent_id, code=code, image=img,
+                             custom_data=custom_data,
                              created_by=current_user(), updated_by=current_user())
         db.session.add(location)
         db.session.commit()
@@ -682,7 +936,8 @@ def add_location():
         log_action('created location', location=location)
         return redirect(url_for('location_detail', code=code))
     names = [n[0] for n in db.session.query(Location.name).distinct()]
-    return render_template('add_location.html', locations=parents, names=names)
+    return render_template('add_location.html', locations=parents, names=names,
+                           edit=False, code=request.args.get('code'))
 
 
 @app.route('/item/<code>/edit', methods=['GET', 'POST'])
@@ -695,13 +950,16 @@ def edit_item(code):
         img = save_image(request.files.get('image'), item.code)
         if img:
             item.image = img
+        item.custom_data = parse_custom_data(request.form.get('custom_data'))
         item.updated_by = current_user()
         db.session.commit()
         log_action('edited item', item=item)
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
-    return render_template('add_item.html', item=item, edit=True, names=names, types=types)
+    locations = Location.query.all()
+    return render_template('add_item.html', item=item, edit=True,
+                           names=names, types=types, locations=locations)
 
 
 @app.route('/item/<code>/delete')
@@ -723,13 +981,16 @@ def edit_container(code):
         img = save_image(request.files.get('image'), container.code)
         if img:
             container.image = img
+        container.custom_data = parse_custom_data(request.form.get('custom_data'))
         container.updated_by = current_user()
         db.session.commit()
         log_action('edited container', container=container)
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
     colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
-    return render_template('add_container.html', container=container, edit=True, sizes=sizes, colors=colors)
+    locations = Location.query.all()
+    return render_template('add_container.html', container=container, edit=True,
+                           sizes=sizes, colors=colors, locations=locations)
 
 
 @app.route('/container/<code>/delete')
@@ -798,6 +1059,40 @@ def regenerate_container_code(code):
     return redirect(url_for('container_detail', code=new_code))
 
 
+@app.route('/container/<code>/assign', methods=['POST'])
+def assign_container_code(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    data = request.get_json() or {}
+    new_code = data.get('code')
+    if not new_code:
+        abort(400)
+    existing = (Item.query.filter_by(code=new_code).first() or
+                Container.query.filter_by(code=new_code).first() or
+                Location.query.filter_by(code=new_code).first())
+    if existing and existing != container:
+        if not data.get('confirm'):
+            return jsonify({'conflict': True}), 409
+        reassign_code(new_code)
+    old_code = container.code
+    if container.image:
+        ext = os.path.splitext(container.image)[1]
+        old_path = os.path.join('static', container.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        container.image = new_rel
+    old_qr = qr_path(container.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    container.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('code reassigned', container=container,
+               description=f'{old_code} -> {new_code}')
+    return jsonify({'ok': True})
+
+
 @app.route('/location/<code>/edit', methods=['GET', 'POST'])
 def edit_location(code):
     location = Location.query.filter_by(code=code).first_or_404()
@@ -809,6 +1104,7 @@ def edit_location(code):
         img = save_image(request.files.get('image'), location.code)
         if img:
             location.image = img
+        location.custom_data = parse_custom_data(request.form.get('custom_data'))
         location.updated_by = current_user()
         db.session.commit()
         log_action('edited location', location=location)
@@ -849,6 +1145,40 @@ def regenerate_location_code(code):
     generate_qr(new_code)
     log_action('regenerated location code', location=location)
     return redirect(url_for('location_detail', code=new_code))
+
+
+@app.route('/location/<code>/assign', methods=['POST'])
+def assign_location_code(code):
+    location = Location.query.filter_by(code=code).first_or_404()
+    data = request.get_json() or {}
+    new_code = data.get('code')
+    if not new_code:
+        abort(400)
+    existing = (Item.query.filter_by(code=new_code).first() or
+                Container.query.filter_by(code=new_code).first() or
+                Location.query.filter_by(code=new_code).first())
+    if existing and existing != location:
+        if not data.get('confirm'):
+            return jsonify({'conflict': True}), 409
+        reassign_code(new_code)
+    old_code = location.code
+    if location.image:
+        ext = os.path.splitext(location.image)[1]
+        old_path = os.path.join('static', location.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        location.image = new_rel
+    old_qr = qr_path(location.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    location.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('code reassigned', location=location,
+               description=f'{old_code} -> {new_code}')
+    return jsonify({'ok': True})
 
 
 @app.route('/scan/<code>')
@@ -1075,9 +1405,130 @@ def regenerate_code(code):
     return redirect(url_for('item_detail', code=new_code))
 
 
+@app.route('/item/<code>/assign', methods=['POST'])
+def assign_item_code(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    data = request.get_json() or {}
+    new_code = data.get('code')
+    if not new_code:
+        abort(400)
+    existing = (Item.query.filter_by(code=new_code).first() or
+                Container.query.filter_by(code=new_code).first() or
+                Location.query.filter_by(code=new_code).first())
+    if existing and existing != item:
+        if not data.get('confirm'):
+            return jsonify({'conflict': True}), 409
+        reassign_code(new_code)
+    old_code = item.code
+    if item.image:
+        ext = os.path.splitext(item.image)[1]
+        old_path = os.path.join('static', item.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        item.image = new_rel
+    old_qr = qr_path(item.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    item.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('code reassigned', item=item,
+               description=f'{old_code} -> {new_code}')
+    return jsonify({'ok': True})
+
+
 @app.route('/scanner')
 def scanner():
     return render_template('scanner.html')
+
+
+def _fuzzy_match(haystack, needle):
+    hay = haystack.lower()
+    return needle in hay or SequenceMatcher(None, hay, needle).ratio() > 0.6
+
+
+@app.route('/autocomplete')
+def autocomplete():
+    q = request.args.get('q', '').lower()
+    suggestions = set()
+    for item in Item.query.all():
+        suggestions.update([item.name or '', item.code])
+        if item.custom_data:
+            try:
+                data = json.loads(item.custom_data)
+                for k, v in data.items():
+                    suggestions.add(str(k))
+                    suggestions.add(str(v))
+            except Exception:
+                suggestions.add(item.custom_data)
+    for c in Container.query.all():
+        suggestions.update([c.name or '', c.code])
+        if c.custom_data:
+            try:
+                data = json.loads(c.custom_data)
+                for k, v in data.items():
+                    suggestions.add(str(k))
+                    suggestions.add(str(v))
+            except Exception:
+                suggestions.add(c.custom_data)
+    for l in Location.query.all():
+        suggestions.update([l.name or '', l.code])
+        if l.custom_data:
+            try:
+                data = json.loads(l.custom_data)
+                for k, v in data.items():
+                    suggestions.add(str(k))
+                    suggestions.add(str(v))
+            except Exception:
+                suggestions.add(l.custom_data)
+    if q:
+        filtered = [s for s in suggestions if _fuzzy_match(s, q)]
+    else:
+        filtered = list(suggestions)
+    return jsonify(sorted([s for s in filtered if s])[:10])
+
+
+@app.route('/qr/batch', methods=['GET', 'POST'])
+def qr_batch():
+    codes = []
+    zip_name = None
+    pdf_name = None
+    img_zip_name = None
+    cols = 4
+    rows = 8
+    if request.method == 'POST':
+        count = int(request.form.get('count', '1'))
+        qr_type = request.form.get('qr_type', 'undefined')
+        cols = int(request.form.get('cols', cols))
+        rows = int(request.form.get('rows', rows))
+        prefix_map = {'item': 'IT', 'container': 'CT', 'location': 'LC', 'undefined': 'QR'}
+        prefix = prefix_map.get(qr_type, 'QR')
+        for _ in range(count):
+            code = generate_code(prefix)
+            codes.append(code)
+            generate_qr(code)
+        zip_name = f"batch_{uuid.uuid4().hex}.zip"
+        zip_path = os.path.join('static', 'qr', zip_name)
+        with zipfile.ZipFile(zip_path, 'w') as zf:
+            for c in codes:
+                zf.write(qr_path(c), arcname=f'{c}.png')
+        pdf_name = f"batch_{uuid.uuid4().hex}.pdf"
+        pdf_path = os.path.join('static', 'qr', pdf_name)
+        generate_pdf(codes, pdf_path, cols=cols, rows=rows)
+        img_zip_name = f"batch_{uuid.uuid4().hex}_images.zip"
+        img_base = os.path.join('static', 'qr', f"batch_{uuid.uuid4().hex}")
+        img_files = generate_images(codes, img_base, cols=cols, rows=rows)
+        img_zip_path = os.path.join('static', 'qr', img_zip_name)
+        with zipfile.ZipFile(img_zip_path, 'w') as zf:
+            for f in img_files:
+                zf.write(f, arcname=os.path.basename(f))
+    return render_template('batch_qr.html', codes=codes,
+                           zip_name=zip_name, pdf_name=pdf_name,
+                           img_zip_name=img_zip_name,
+                           cols=cols if request.method == 'POST' else 4,
+                           rows=rows if request.method == 'POST' else 8)
 
 
 if __name__ == '__main__':

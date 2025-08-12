@@ -1,7 +1,8 @@
 {% extends 'base.html' %}
 {% block content %}
 <form method="get" class="mb-3">
-  <input class="form-control mb-2" type="text" name="q" placeholder="Search" value="{{ request.args.get('q','') }}">
+  <input class="form-control mb-2" type="text" name="q" id="search" list="suggestions" placeholder="Search" value="{{ request.args.get('q','') }}">
+  <datalist id="suggestions"></datalist>
   <div class="row g-2">
     <div class="col"><input class="form-control" type="text" name="name" placeholder="Item name" value="{{ request.args.get('name','') }}"></div>
     <div class="col"><input class="form-control" type="text" name="type" placeholder="Type" value="{{ request.args.get('type','') }}"></div>
@@ -106,4 +107,26 @@
     </div>
   </div>
 </div>
+<script>
+const searchInput=document.getElementById('search');
+const sugg=document.getElementById('suggestions');
+let timer;
+searchInput.addEventListener('input',()=>{
+  clearTimeout(timer);
+  const val=searchInput.value;
+  if(val.length<2){sugg.innerHTML='';return;}
+  timer=setTimeout(()=>{
+    fetch('/autocomplete?q='+encodeURIComponent(val))
+      .then(r=>r.json())
+      .then(data=>{
+        sugg.innerHTML='';
+        data.forEach(d=>{
+          const o=document.createElement('option');
+          o.value=d;
+          sugg.appendChild(o);
+        });
+      });
+  },200);
+});
+</script>
 {% endblock %}

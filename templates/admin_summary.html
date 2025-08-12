@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Admin Summary</h2>
+<form class="row g-2 mb-2" method="get">
+  <div class="col-6 col-md-3"><input class="form-control" type="date" name="start" value="{{ start or '' }}"></div>
+  <div class="col-6 col-md-3"><input class="form-control" type="date" name="end" value="{{ end or '' }}"></div>
+  <div class="col-12 col-md-3"><button class="btn btn-primary w-100" type="submit">Apply</button></div>
+</form>
+<div class="btn-group flex-wrap mb-3">
+  <a class="btn btn-outline-primary mb-1" href="?range=today">Today</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=yesterday">Yesterday</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=this_week">This Week</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=last_week">Last Week</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=this_month">This Month</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=last_month">Last Month</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=this_year">This Year</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=last_year">Last Year</a>
+  <a class="btn btn-outline-primary mb-1" href="?range=all">All Time</a>
+</div>
+<div class="accordion" id="admin-acc">
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingCounts">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCounts">Counts</button>
+    </h2>
+    <div id="collapseCounts" class="accordion-collapse collapse show">
+      <div class="accordion-body">
+        <div class="row">
+          <div class="col">Items: <b>{{ items_count }}</b></div>
+          <div class="col">Containers: <b>{{ containers_count }}</b></div>
+          <div class="col">Locations: <b>{{ locations_count }}</b></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingLoc">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLoc">Items per Location</button>
+    </h2>
+    <div id="collapseLoc" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0" style="max-height:200px; overflow:auto;">
+        <table class="table table-sm mb-0">
+          <tr><th>Location</th><th>Items</th></tr>
+          {% for loc, count in items_by_location %}
+          <tr><td>{{ loc.full_path() }}</td><td>{{ count }}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingType">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseType">Items by Type</button>
+    </h2>
+    <div id="collapseType" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0" style="max-height:200px; overflow:auto;">
+        <table class="table table-sm mb-0">
+          <tr><th>Type</th><th>Count</th></tr>
+          {% for type, count in items_by_type %}
+          <tr><td>{{ type }}</td><td>{{ count }}</td></tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingMoves">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMoves">Recent Moves</button>
+    </h2>
+    <div id="collapseMoves" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0" style="max-height:200px; overflow:auto;">
+        <ul class="list-group list-group-flush mb-0">
+          {% for h in moves %}
+          <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}"></span> - {{ h.description|safe }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingAct">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAct">Recent User Activities</button>
+    </h2>
+    <div id="collapseAct" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0" style="max-height:200px; overflow:auto;">
+        <ul class="list-group list-group-flush mb-0">
+          {% for h in activities %}
+          <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}"></span> - {{ h.user.username if h.user else 'system' }} - {{ h.action }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingLogin">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseLogin">Recent Logins</button>
+    </h2>
+    <div id="collapseLogin" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0" style="max-height:200px; overflow:auto;">
+        <ul class="list-group list-group-flush mb-0">
+          {% for h in logins %}
+          <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}"></span> - {{ h.user.username if h.user else '' }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

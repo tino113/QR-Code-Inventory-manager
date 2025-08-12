@@ -18,11 +18,49 @@
       {% endfor %}
     </select>
   </div>
+  {% if not edit %}
+  <div class="mb-3">
+    <label class="form-label">Existing QR Code</label>
+    <div class="input-group">
+      <input class="form-control" type="text" name="code" id="code-input" placeholder="Scan or enter code" value="{{ code or '' }}">
+      <button class="btn btn-primary" type="button" id="scan-btn">Scan</button>
+    </div>
+  </div>
+  <div id="scan-area" style="display:none" class="mb-3">
+    <select id="camera-select" class="form-select mb-2"></select>
+    <video id="video" style="width:100%;max-width:400px;" autoplay muted playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+  </div>
+  {% endif %}
+  <div class="mb-3">
+    <label class="form-label">Custom Data (JSON or key:value per line)</label>
+    <textarea class="form-control" name="custom_data" rows="3" placeholder='{"note": "example"}'>{{ location.custom_data if edit else '' }}</textarea>
+  </div>
   <div class="mb-3">
     <label class="form-label">Image</label>
     <input class="form-control" type="file" name="image">
   </div>
   <button class="btn btn-primary" type="submit">Submit</button>
 </form>
+{% if not edit %}
+<script src="{{ url_for('static', filename='js/jsqr.js') }}"></script>
+<script>
+const scanBtn=document.getElementById('scan-btn');
+const scanArea=document.getElementById('scan-area');
+const cameraSelect=document.getElementById('camera-select');
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+let stream=null;
+function beep(){const ctx=new (window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();osc.frequency.value=440;osc.connect(ctx.destination);osc.start();setTimeout(()=>osc.stop(),150);}
+async function startStream(id){if(stream){stream.getTracks().forEach(t=>t.stop());}const constr={video:id?{deviceId:{exact:id}}:{facingMode:{ideal:'environment'}},audio:false};stream=await navigator.mediaDevices.getUserMedia(constr);video.srcObject=stream;await video.play();requestAnimationFrame(tick);}
+async function init(){const devices=await navigator.mediaDevices.enumerateDevices();const cams=devices.filter(d=>d.kind==='videoinput');cameraSelect.innerHTML='';cams.forEach((c,i)=>{const opt=document.createElement('option');opt.value=c.deviceId;opt.text=c.label||`Camera ${i+1}`;cameraSelect.appendChild(opt);});cameraSelect.style.display=cams.length>1?'block':'none';const pref=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[0];cameraSelect.value=pref.deviceId;startStream(pref.deviceId);}
+cameraSelect.addEventListener('change',()=>startStream(cameraSelect.value));
+function stop(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}}
+function handleScan(code){beep();document.getElementById('code-input').value=code;stop();scanArea.style.display='none';}
+function tick(){if(video.readyState===video.HAVE_ENOUGH_DATA){canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0,canvas.width,canvas.height);const img=ctx.getImageData(0,0,canvas.width,canvas.height);const qr=jsQR(img.data,img.width,img.height);if(qr){handleScan(qr.data);return;}}requestAnimationFrame(tick);}
+scanBtn.addEventListener('click',()=>{scanArea.style.display='block';init();});
+</script>
+{% endif %}
 {% endblock %}
 
