@@ -21,6 +21,13 @@
 {% endif %}
 <div class="buttons-vertical">
   <a class="btn btn-info" href="/location/{{ location.code }}/edit">Edit</a>
+  <button class="btn btn-secondary w-100" type="button" id="scan-new-btn">Scan New QR</button>
+  <div id="scan-area" style="display:none" class="mt-2">
+    <select id="camera-select" class="form-select mb-2"></select>
+    <video id="video" style="width:100%;max-width:400px;" autoplay muted playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="scan-msg" class="text-danger small mt-1"></div>
+  </div>
   <form action="/location/{{ location.code }}/regen" method="post">
     <button class="btn btn-secondary w-100">New QR Code</button>
   </form>
@@ -76,5 +83,24 @@
 {% endfor %}
 </ul>
 {% endif %}
+<script src="{{ url_for('static', filename='js/jsqr.js') }}"></script>
+<script>
+const scanBtn=document.getElementById('scan-new-btn');
+const scanArea=document.getElementById('scan-area');
+const cameraSelect=document.getElementById('camera-select');
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+let stream=null;let pending=null;const msg=document.getElementById('scan-msg');
+function beep(){const ctx=new (window.AudioContext||window.webkitAudioContext)();const osc=ctx.createOscillator();osc.frequency.value=440;osc.connect(ctx.destination);osc.start();setTimeout(()=>osc.stop(),150);}
+async function startStream(id){if(stream){stream.getTracks().forEach(t=>t.stop());}const cons={video:id?{deviceId:{exact:id}}:{facingMode:{ideal:'environment'}},audio:false};stream=await navigator.mediaDevices.getUserMedia(cons);video.srcObject=stream;await video.play();requestAnimationFrame(tick);}
+async function init(){const devices=await navigator.mediaDevices.enumerateDevices();const cams=devices.filter(d=>d.kind==='videoinput');cameraSelect.innerHTML='';cams.forEach((c,i)=>{const opt=document.createElement('option');opt.value=c.deviceId;opt.text=c.label||`Camera ${i+1}`;cameraSelect.appendChild(opt);});cameraSelect.style.display=cams.length>1?'block':'none';const pref=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[0];cameraSelect.value=pref.deviceId;startStream(pref.deviceId);}
+cameraSelect.addEventListener('change',()=>startStream(cameraSelect.value));
+function stop(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}}
+function send(code,confirm){fetch(`/location/{{ location.code }}/assign`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,confirm:confirm})}).then(r=>{if(r.status===409){pending=code;msg.textContent='Code in use. Scan again to confirm.';scanArea.style.display='block';startStream(cameraSelect.value);return;}if(r.ok){location.href='/location/'+code;}});}
+function handleScan(code){beep();if(pending&&pending===code){send(code,true);stop();return;}pending=code;send(code,false);stop();}
+function tick(){if(video.readyState===video.HAVE_ENOUGH_DATA){canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0,canvas.width,canvas.height);const img=ctx.getImageData(0,0,canvas.width,canvas.height);const qr=jsQR(img.data,img.width,img.height);if(qr){handleScan(qr.data);return;}}requestAnimationFrame(tick);}
+scanBtn.addEventListener('click',()=>{scanArea.style.display='block';msg.textContent='';init();});
+</script>
 {% endblock %}
 

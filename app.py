@@ -13,6 +13,7 @@ import qrcode
 import glob
 import json
 import zipfile
+from PIL import Image
 
 
 app = Flask(__name__)
@@ -228,7 +229,20 @@ with app.app_context():
 
 
 def generate_code(prefix: str) -> str:
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+    """Generate a unique code with the given prefix.
+
+    The function ensures the generated code is not already associated with
+    any existing item, container or location and that no QR image exists for
+    it yet. This prevents accidental reuse of codes when generating batches of
+    QR codes."""
+    while True:
+        code = f"{prefix}-{uuid.uuid4().hex[:8]}"
+        exists = (Item.query.filter_by(code=code).first() or
+                  Container.query.filter_by(code=code).first() or
+                  Location.query.filter_by(code=code).first())
+        if exists or os.path.exists(qr_path(code)):
+            continue
+        return code
 
 
 def qr_path(code: str) -> str:
@@ -240,6 +254,20 @@ def generate_qr(code: str):
     path = qr_path(code)
     img.save(path)
     return path
+
+
+def generate_pdf(codes, path, cols=4, rows=8):
+    """Create a simple A4 PDF grid of QR codes."""
+    width, height = 2480, 3508  # A4 at 300 DPI
+    page = Image.new('RGB', (width, height), 'white')
+    cell_w = width // cols
+    cell_h = height // rows
+    for idx, code in enumerate(codes):
+        img = Image.open(qr_path(code)).resize((cell_w, cell_h))
+        x = (idx % cols) * cell_w
+        y = (idx // cols) * cell_h
+        page.paste(img, (x, y))
+    page.save(path, 'PDF', resolution=300.0)
 
 
 def parse_custom_data(data_str):
@@ -672,9 +700,11 @@ def add_item():
             reassign_code(code)
         img = save_image(request.files.get('image'), code)
         custom_data = parse_custom_data(request.form.get('custom_data'))
+        location_id = request.form.get('location')
+        location = Location.query.get(location_id) if location_id else None
         existing = Item.query.filter(db.func.lower(Item.name) == name.lower()).first()
         item = Item(name=name, type=type_, quantity=quantity, code=code, image=img,
-                    custom_data=custom_data,
+                    custom_data=custom_data, location=location,
                     created_by=current_user(), updated_by=current_user())
         db.session.add(item)
         db.session.commit()
@@ -690,7 +720,10 @@ def add_item():
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
-    return render_template('add_item.html', names=names, types=types, edit=False)
+    locations = Location.query.all()
+    return render_template('add_item.html', names=names, types=types,
+                           locations=locations, edit=False,
+                           code=request.args.get('code'))
 
 
 @app.route('/add/container', methods=['GET', 'POST'])
@@ -704,9 +737,11 @@ def add_container():
             reassign_code(code)
         img = save_image(request.files.get('image'), code)
         custom_data = parse_custom_data(request.form.get('custom_data'))
+        location_id = request.form.get('location')
+        location = Location.query.get(location_id) if location_id else None
         container = Container(name=name, size=size, color=color,
                               code=code, image=img,
-                              custom_data=custom_data,
+                              custom_data=custom_data, location=location,
                               created_by=current_user(), updated_by=current_user())
         db.session.add(container)
         db.session.commit()
@@ -715,7 +750,10 @@ def add_container():
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
     colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
-    return render_template('add_container.html', sizes=sizes, colors=colors, edit=False)
+    locations = Location.query.all()
+    return render_template('add_container.html', sizes=sizes, colors=colors,
+                           locations=locations, edit=False,
+                           code=request.args.get('code'))
 
 
 @app.route('/add/location', methods=['GET', 'POST'])
@@ -738,7 +776,8 @@ def add_location():
         log_action('created location', location=location)
         return redirect(url_for('location_detail', code=code))
     names = [n[0] for n in db.session.query(Location.name).distinct()]
-    return render_template('add_location.html', locations=parents, names=names, edit=False)
+    return render_template('add_location.html', locations=parents, names=names,
+                           edit=False, code=request.args.get('code'))
 
 
 @app.route('/item/<code>/edit', methods=['GET', 'POST'])
@@ -758,7 +797,9 @@ def edit_item(code):
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
-    return render_template('add_item.html', item=item, edit=True, names=names, types=types)
+    locations = Location.query.all()
+    return render_template('add_item.html', item=item, edit=True,
+                           names=names, types=types, locations=locations)
 
 
 @app.route('/item/<code>/delete')
@@ -787,7 +828,9 @@ def edit_container(code):
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
     colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
-    return render_template('add_container.html', container=container, edit=True, sizes=sizes, colors=colors)
+    locations = Location.query.all()
+    return render_template('add_container.html', container=container, edit=True,
+                           sizes=sizes, colors=colors, locations=locations)
 
 
 @app.route('/container/<code>/delete')
@@ -856,6 +899,40 @@ def regenerate_container_code(code):
     return redirect(url_for('container_detail', code=new_code))
 
 
+@app.route('/container/<code>/assign', methods=['POST'])
+def assign_container_code(code):
+    container = Container.query.filter_by(code=code).first_or_404()
+    data = request.get_json() or {}
+    new_code = data.get('code')
+    if not new_code:
+        abort(400)
+    existing = (Item.query.filter_by(code=new_code).first() or
+                Container.query.filter_by(code=new_code).first() or
+                Location.query.filter_by(code=new_code).first())
+    if existing and existing != container:
+        if not data.get('confirm'):
+            return jsonify({'conflict': True}), 409
+        reassign_code(new_code)
+    old_code = container.code
+    if container.image:
+        ext = os.path.splitext(container.image)[1]
+        old_path = os.path.join('static', container.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        container.image = new_rel
+    old_qr = qr_path(container.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    container.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('code reassigned', container=container,
+               description=f'{old_code} -> {new_code}')
+    return jsonify({'ok': True})
+
+
 @app.route('/location/<code>/edit', methods=['GET', 'POST'])
 def edit_location(code):
     location = Location.query.filter_by(code=code).first_or_404()
@@ -908,6 +985,40 @@ def regenerate_location_code(code):
     generate_qr(new_code)
     log_action('regenerated location code', location=location)
     return redirect(url_for('location_detail', code=new_code))
+
+
+@app.route('/location/<code>/assign', methods=['POST'])
+def assign_location_code(code):
+    location = Location.query.filter_by(code=code).first_or_404()
+    data = request.get_json() or {}
+    new_code = data.get('code')
+    if not new_code:
+        abort(400)
+    existing = (Item.query.filter_by(code=new_code).first() or
+                Container.query.filter_by(code=new_code).first() or
+                Location.query.filter_by(code=new_code).first())
+    if existing and existing != location:
+        if not data.get('confirm'):
+            return jsonify({'conflict': True}), 409
+        reassign_code(new_code)
+    old_code = location.code
+    if location.image:
+        ext = os.path.splitext(location.image)[1]
+        old_path = os.path.join('static', location.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        location.image = new_rel
+    old_qr = qr_path(location.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    location.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('code reassigned', location=location,
+               description=f'{old_code} -> {new_code}')
+    return jsonify({'ok': True})
 
 
 @app.route('/scan/<code>')
@@ -1134,19 +1245,57 @@ def regenerate_code(code):
     return redirect(url_for('item_detail', code=new_code))
 
 
+@app.route('/item/<code>/assign', methods=['POST'])
+def assign_item_code(code):
+    item = Item.query.filter_by(code=code).first_or_404()
+    data = request.get_json() or {}
+    new_code = data.get('code')
+    if not new_code:
+        abort(400)
+    existing = (Item.query.filter_by(code=new_code).first() or
+                Container.query.filter_by(code=new_code).first() or
+                Location.query.filter_by(code=new_code).first())
+    if existing and existing != item:
+        if not data.get('confirm'):
+            return jsonify({'conflict': True}), 409
+        reassign_code(new_code)
+    old_code = item.code
+    if item.image:
+        ext = os.path.splitext(item.image)[1]
+        old_path = os.path.join('static', item.image)
+        new_rel = os.path.join('uploads', f'{new_code}{ext}')
+        new_path = os.path.join('static', new_rel)
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+        item.image = new_rel
+    old_qr = qr_path(item.code)
+    if os.path.exists(old_qr):
+        os.remove(old_qr)
+    item.code = new_code
+    db.session.commit()
+    generate_qr(new_code)
+    log_action('code reassigned', item=item,
+               description=f'{old_code} -> {new_code}')
+    return jsonify({'ok': True})
+
+
 @app.route('/scanner')
 def scanner():
     return render_template('scanner.html')
 
 
-@app.route('/qr/print', methods=['GET', 'POST'])
-def qr_print():
+@app.route('/qr/batch', methods=['GET', 'POST'])
+def qr_batch():
     codes = []
     zip_name = None
+    pdf_name = None
     if request.method == 'POST':
         count = int(request.form.get('count', '1'))
+        qr_type = request.form.get('qr_type', 'undefined')
+        prefix_map = {'item': 'IT', 'container': 'CT', 'location': 'LC', 'undefined': 'QR'}
+        prefix = prefix_map.get(qr_type, 'QR')
         for _ in range(count):
-            code = generate_code('QR')
+            code = generate_code(prefix)
             codes.append(code)
             generate_qr(code)
         zip_name = f"batch_{uuid.uuid4().hex}.zip"
@@ -1154,7 +1303,11 @@ def qr_print():
         with zipfile.ZipFile(zip_path, 'w') as zf:
             for c in codes:
                 zf.write(qr_path(c), arcname=f'{c}.png')
-    return render_template('qr_print.html', codes=codes, zip_name=zip_name)
+        pdf_name = f"batch_{uuid.uuid4().hex}.pdf"
+        pdf_path = os.path.join('static', 'qr', pdf_name)
+        generate_pdf(codes, pdf_path)
+    return render_template('batch_qr.html', codes=codes,
+                           zip_name=zip_name, pdf_name=pdf_name)
 
 
 if __name__ == '__main__':

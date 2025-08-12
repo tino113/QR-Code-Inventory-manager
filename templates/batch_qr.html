@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Batch QR</h2>
+<form method="post" class="mb-3">
+  <div class="mb-3">
+    <label class="form-label">Number of codes</label>
+    <input class="form-control" type="number" name="count" min="1" value="1">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Type</label>
+    <select class="form-select" name="qr_type">
+      <option value="undefined">Undefined</option>
+      <option value="item">Item</option>
+      <option value="container">Container</option>
+      <option value="location">Location</option>
+    </select>
+  </div>
+  <button class="btn btn-primary" type="submit">Generate</button>
+</form>
+{% if codes %}
+  <div class="mb-3">
+  {% for c in codes %}
+    <img src="{{ url_for('static', filename='qr/' + c + '.png') }}" class="qr-img m-1">
+  {% endfor %}
+  </div>
+  {% if zip_name %}
+  <a class="btn btn-secondary me-2" href="{{ url_for('static', filename='qr/' + zip_name) }}" download>Download ZIP</a>
+  {% endif %}
+  {% if pdf_name %}
+  <a class="btn btn-secondary" href="{{ url_for('static', filename='qr/' + pdf_name) }}" download>Download PDF</a>
+  {% endif %}
+{% endif %}
+{% endblock %}
