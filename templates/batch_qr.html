@@ -7,6 +7,14 @@
     <input class="form-control" type="number" name="count" min="1" value="1">
   </div>
   <div class="mb-3">
+    <label class="form-label">Columns: <span id="colsVal">{{ cols }}</span></label>
+    <input class="form-range" type="range" min="1" max="10" name="cols" value="{{ cols }}" oninput="document.getElementById('colsVal').innerText=this.value">
+  </div>
+  <div class="mb-3">
+    <label class="form-label">Rows: <span id="rowsVal">{{ rows }}</span></label>
+    <input class="form-range" type="range" min="1" max="20" name="rows" value="{{ rows }}" oninput="document.getElementById('rowsVal').innerText=this.value">
+  </div>
+  <div class="mb-3">
     <label class="form-label">Type</label>
     <select class="form-select" name="qr_type">
       <option value="undefined">Undefined</option>
@@ -19,15 +27,20 @@
 </form>
 {% if codes %}
   <div class="mb-3">
+    {% if zip_name %}
+    <a class="btn btn-secondary me-2" href="{{ url_for('static', filename='qr/' + zip_name) }}" download>Download ZIP</a>
+    {% endif %}
+    {% if pdf_name %}
+    <a class="btn btn-secondary me-2" href="{{ url_for('static', filename='qr/' + pdf_name) }}" download>Download PDF</a>
+    {% endif %}
+    {% if img_zip_name %}
+    <a class="btn btn-secondary" href="{{ url_for('static', filename='qr/' + img_zip_name) }}" download>Download Images</a>
+    {% endif %}
+  </div>
+  <div class="mb-3">
   {% for c in codes %}
     <img src="{{ url_for('static', filename='qr/' + c + '.png') }}" class="qr-img m-1">
   {% endfor %}
   </div>
-  {% if zip_name %}
-  <a class="btn btn-secondary me-2" href="{{ url_for('static', filename='qr/' + zip_name) }}" download>Download ZIP</a>
-  {% endif %}
-  {% if pdf_name %}
-  <a class="btn btn-secondary" href="{{ url_for('static', filename='qr/' + pdf_name) }}" download>Download PDF</a>
-  {% endif %}
 {% endif %}
 {% endblock %}

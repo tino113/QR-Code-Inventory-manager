@@ -14,6 +14,8 @@ import glob
 import json
 import zipfile
 from PIL import Image
+import math
+from difflib import SequenceMatcher
 
 
 app = Flask(__name__)
@@ -258,19 +260,47 @@ def generate_qr(code: str):
     return path
 
 
-def generate_pdf(codes, path, cols=4, rows=8):
-    """Create a simple A4 PDF grid of QR codes."""
+def _qr_pages(codes, cols, rows):
+    """Return PIL Images containing grids of codes."""
     width, height = 2480, 3508  # A4 at 300 DPI
-    page = Image.new('RGB', (width, height), 'white')
-    side = min(width // cols, height // rows)
+    margin = 100  # small margin for printers
+    side = min((width - margin * 2) // cols,
+               (height - margin * 2) // rows)
     margin_x = (width - side * cols) // 2
     margin_y = (height - side * rows) // 2
-    for idx, code in enumerate(codes):
-        img = Image.open(qr_path(code)).resize((side, side))
-        x = margin_x + (idx % cols) * side
-        y = margin_y + (idx // cols) * side
-        page.paste(img, (x, y))
-    page.save(path, 'PDF', resolution=300.0)
+    per_page = cols * rows
+    pages = []
+    for page_idx in range(math.ceil(len(codes) / per_page)):
+        page = Image.new('RGB', (width, height), 'white')
+        for cell in range(per_page):
+            idx = page_idx * per_page + cell
+            if idx >= len(codes):
+                break
+            img = Image.open(qr_path(codes[idx])).resize((side, side))
+            x = margin_x + (cell % cols) * side
+            y = margin_y + (cell // cols) * side
+            page.paste(img, (x, y))
+        pages.append(page)
+    return pages
+
+
+def generate_pdf(codes, path, cols=4, rows=8):
+    pages = _qr_pages(codes, cols, rows)
+    if not pages:
+        return
+    pages[0].save(path, 'PDF', resolution=300.0,
+                  save_all=True, append_images=pages[1:])
+
+
+def generate_images(codes, base_path, cols=4, rows=8):
+    """Generate A4-sized PNG pages and return their paths."""
+    pages = _qr_pages(codes, cols, rows)
+    files = []
+    for i, page in enumerate(pages, 1):
+        fname = f"{base_path}_{i}.png"
+        page.save(fname, 'PNG')
+        files.append(fname)
+    return files
 
 
 def parse_custom_data(data_str):
@@ -401,32 +431,74 @@ def log_action(action, item=None, container=None, location=None, description=Non
 @app.route('/')
 def index():
     q = request.args.get('q', '')
-    item_query = Item.query
-    if request.args.get('name'):
-        item_query = item_query.filter(Item.name.contains(request.args['name']))
-    if request.args.get('type'):
-        item_query = item_query.filter(Item.type.contains(request.args['type']))
-    if request.args.get('location'):
-        item_query = item_query.filter_by(location_id=request.args['location'])
-    if request.args.get('container'):
-        item_query = item_query.filter_by(container_id=request.args['container'])
-    if request.args.get('quantity'):
-        item_query = item_query.filter_by(quantity=request.args['quantity'])
-    items = item_query.all()
+
+    def apply_filters(base_query):
+        if request.args.get('name'):
+            base_query = base_query.filter(Item.name.contains(request.args['name']))
+        if request.args.get('type'):
+            base_query = base_query.filter(Item.type.contains(request.args['type']))
+        if request.args.get('location'):
+            base_query = base_query.filter_by(location_id=request.args['location'])
+        if request.args.get('container'):
+            base_query = base_query.filter_by(container_id=request.args['container'])
+        if request.args.get('quantity'):
+            base_query = base_query.filter_by(quantity=request.args['quantity'])
+        return base_query
+
+    items = apply_filters(Item.query).all()
 
     all_containers = Container.query.all()
     all_locations = Location.query.all()
     containers = all_containers
     locations = all_locations
+
+    unaccounted = apply_filters(Item.query.filter_by(container_id=None, location_id=None, missing=False)).all()
+    missing_items = apply_filters(Item.query.filter_by(missing=True)).all()
+    missing_containers = Container.query.filter_by(missing=True).all()
+
+    def item_match(i, needle):
+        data = ''
+        if i.custom_data:
+            try:
+                data = json.dumps(json.loads(i.custom_data))
+            except Exception:
+                data = i.custom_data
+        fields = [i.name or '', i.type or '', str(i.quantity), i.code, data]
+        if i.location:
+            fields.append(i.location.full_path())
+        if i.container and i.container.name:
+            fields.append(i.container.name)
+        return any(_fuzzy_match(f, needle) for f in fields)
+
+    def container_match(c, needle):
+        data = ''
+        if c.custom_data:
+            try:
+                data = json.dumps(json.loads(c.custom_data))
+            except Exception:
+                data = c.custom_data
+        fields = [c.name or '', c.size or '', c.color or '', c.code, data]
+        return any(_fuzzy_match(f, needle) for f in fields)
+
+    def location_match(l, needle):
+        data = ''
+        if l.custom_data:
+            try:
+                data = json.dumps(json.loads(l.custom_data))
+            except Exception:
+                data = l.custom_data
+        fields = [l.full_path(), l.code, data]
+        return any(_fuzzy_match(f, needle) for f in fields)
+
     if q:
         ql = q.lower()
-        items = [i for i in items if ql in i.name.lower() or ql in i.type.lower() or ql in str(i.quantity) or (i.location and ql in i.location.full_path().lower()) or (i.container and i.container.name and ql in i.container.name.lower())]
-        containers = [c for c in containers if (c.name and ql in c.name.lower()) or (c.size and ql in c.size.lower()) or (c.color and ql in c.color.lower())]
-        locations = [l for l in locations if ql in l.full_path().lower()]
+        items = [i for i in items if item_match(i, ql)]
+        containers = [c for c in containers if container_match(c, ql)]
+        locations = [l for l in locations if location_match(l, ql)]
+        unaccounted = [i for i in unaccounted if item_match(i, ql)]
+        missing_items = [i for i in missing_items if item_match(i, ql)]
+        missing_containers = [c for c in missing_containers if container_match(c, ql)]
 
-    unaccounted = Item.query.filter_by(container_id=None, location_id=None, missing=False).all()
-    missing_items = Item.query.filter_by(missing=True).all()
-    missing_containers = Container.query.filter_by(missing=True).all()
     return render_template('index.html', items=items, containers=containers,
                            locations=locations, unaccounted=unaccounted,
                            missing_items=missing_items,
@@ -567,22 +639,70 @@ def admin_summary():
     items_count = Item.query.count()
     containers_count = Container.query.count()
     locations_count = Location.query.count()
+    range_key = request.args.get('range')
+    start = request.args.get('start')
+    end = request.args.get('end')
+    today = dt.date.today()
+    if range_key:
+        if range_key == 'today':
+            start = end = today.isoformat()
+        elif range_key == 'yesterday':
+            d = today - dt.timedelta(days=1)
+            start = end = d.isoformat()
+        elif range_key == 'this_week':
+            start = (today - dt.timedelta(days=today.weekday())).isoformat()
+            end = today.isoformat()
+        elif range_key == 'last_week':
+            end_date = today - dt.timedelta(days=today.weekday() + 1)
+            start_date = end_date - dt.timedelta(days=6)
+            start, end = start_date.isoformat(), end_date.isoformat()
+        elif range_key == 'this_month':
+            start = today.replace(day=1).isoformat()
+            end = today.isoformat()
+        elif range_key == 'last_month':
+            first_this = today.replace(day=1)
+            last_month_end = first_this - dt.timedelta(days=1)
+            start = last_month_end.replace(day=1).isoformat()
+            end = last_month_end.isoformat()
+        elif range_key == 'this_year':
+            start = today.replace(month=1, day=1).isoformat()
+            end = today.isoformat()
+        elif range_key == 'last_year':
+            last_year = today.year - 1
+            start = dt.date(last_year, 1, 1).isoformat()
+            end = dt.date(last_year, 12, 31).isoformat()
+        elif range_key == 'all':
+            start = end = None
+
+    start_dt = dt.datetime.fromisoformat(start) if start else None
+    end_dt = dt.datetime.fromisoformat(end) if end else None
+    if end_dt:
+        end_dt = end_dt.replace(hour=23, minute=59, second=59)
+
+    def in_range(query):
+        if start_dt:
+            query = query.filter(History.timestamp >= start_dt)
+        if end_dt:
+            query = query.filter(History.timestamp <= end_dt)
+        return query
+
     items_by_location = (db.session.query(Location, db.func.count(Item.id))
                          .outerjoin(Item)
                          .group_by(Location.id).all())
     items_by_type = db.session.query(Item.type, db.func.count(Item.id)).group_by(Item.type).all()
-    moves = (History.query.filter(History.action.in_([
-                'item to container', 'item to location', 'container to location']))
+    moves = (in_range(History.query.filter(History.action.in_([
+                'item to container', 'item to location', 'container to location'])))
              .order_by(History.timestamp.desc()).limit(20).all())
-    activities = History.query.order_by(History.timestamp.desc()).limit(20).all()
-    logins = (History.query.filter_by(action='user logged in')
+    activities = in_range(History.query).order_by(History.timestamp.desc()).limit(20).all()
+    logins = (in_range(History.query.filter_by(action='user logged in'))
               .order_by(History.timestamp.desc()).limit(20).all())
     return render_template('admin_summary.html', items_count=items_count,
                            containers_count=containers_count,
                            locations_count=locations_count,
                            items_by_location=items_by_location,
                            items_by_type=items_by_type,
-                           moves=moves, activities=activities, logins=logins)
+                           moves=moves, activities=activities, logins=logins,
+                           start=start, end=end)
 
 
 @app.route('/admin/users', methods=['GET', 'POST'])
@@ -1322,14 +1442,65 @@ def scanner():
     return render_template('scanner.html')
 
 
+def _fuzzy_match(haystack, needle):
+    hay = haystack.lower()
+    return needle in hay or SequenceMatcher(None, hay, needle).ratio() > 0.6
+
+
+@app.route('/autocomplete')
+def autocomplete():
+    q = request.args.get('q', '').lower()
+    suggestions = set()
+    for item in Item.query.all():
+        suggestions.update([item.name or '', item.code])
+        if item.custom_data:
+            try:
+                data = json.loads(item.custom_data)
+                for k, v in data.items():
+                    suggestions.add(str(k))
+                    suggestions.add(str(v))
+            except Exception:
+                suggestions.add(item.custom_data)
+    for c in Container.query.all():
+        suggestions.update([c.name or '', c.code])
+        if c.custom_data:
+            try:
+                data = json.loads(c.custom_data)
+                for k, v in data.items():
+                    suggestions.add(str(k))
+                    suggestions.add(str(v))
+            except Exception:
+                suggestions.add(c.custom_data)
+    for l in Location.query.all():
+        suggestions.update([l.name or '', l.code])
+        if l.custom_data:
+            try:
+                data = json.loads(l.custom_data)
+                for k, v in data.items():
+                    suggestions.add(str(k))
+                    suggestions.add(str(v))
+            except Exception:
+                suggestions.add(l.custom_data)
+    if q:
+        filtered = [s for s in suggestions if _fuzzy_match(s, q)]
+    else:
+        filtered = list(suggestions)
+    return jsonify(sorted([s for s in filtered if s])[:10])
+
+
 @app.route('/qr/batch', methods=['GET', 'POST'])
 def qr_batch():
     codes = []
     zip_name = None
     pdf_name = None
+    img_zip_name = None
+    cols = 4
+    rows = 8
     if request.method == 'POST':
         count = int(request.form.get('count', '1'))
         qr_type = request.form.get('qr_type', 'undefined')
+        cols = int(request.form.get('cols', cols))
+        rows = int(request.form.get('rows', rows))
         prefix_map = {'item': 'IT', 'container': 'CT', 'location': 'LC', 'undefined': 'QR'}
         prefix = prefix_map.get(qr_type, 'QR')
         for _ in range(count):
@@ -1343,9 +1514,19 @@ def qr_batch():
                 zf.write(qr_path(c), arcname=f'{c}.png')
         pdf_name = f"batch_{uuid.uuid4().hex}.pdf"
         pdf_path = os.path.join('static', 'qr', pdf_name)
-        generate_pdf(codes, pdf_path)
+        generate_pdf(codes, pdf_path, cols=cols, rows=rows)
+        img_zip_name = f"batch_{uuid.uuid4().hex}_images.zip"
+        img_base = os.path.join('static', 'qr', f"batch_{uuid.uuid4().hex}")
+        img_files = generate_images(codes, img_base, cols=cols, rows=rows)
+        img_zip_path = os.path.join('static', 'qr', img_zip_name)
+        with zipfile.ZipFile(img_zip_path, 'w') as zf:
+            for f in img_files:
+                zf.write(f, arcname=os.path.basename(f))
     return render_template('batch_qr.html', codes=codes,
-                           zip_name=zip_name, pdf_name=pdf_name)
+                           zip_name=zip_name, pdf_name=pdf_name,
+                           img_zip_name=img_zip_name,
+                           cols=cols if request.method == 'POST' else 4,
+                           rows=rows if request.method == 'POST' else 8)
 
 
 if __name__ == '__main__':
