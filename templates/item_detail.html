@@ -15,6 +15,14 @@
   <tr><th>Updated</th><td><span class="timestamp" data-ts="{{ item.updated_at.isoformat() }}Z"></span> by {{ item.updated_by.username if item.updated_by else 'n/a' }}</td></tr>
   <tr><th>Missing</th><td>{{ 'Yes' if item.missing else 'No' }}</td></tr>
 </table>
+{% if custom_data %}
+<h4>Custom Data</h4>
+<table class="table table-sm mb-3">
+  {% for k,v in custom_data.items() %}
+  <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
 <div class="buttons-vertical">
   <a class="btn btn-secondary" href="/item/{{ item.code }}/split">Split</a>
   <a class="btn btn-secondary" href="/item/{{ item.code }}/join">Join</a>

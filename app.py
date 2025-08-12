@@ -11,6 +11,8 @@ from werkzeug.utils import secure_filename
 from sqlalchemy import or_, and_
 import qrcode
 import glob
+import json
+import zipfile
 
 
 app = Flask(__name__)
@@ -53,6 +55,7 @@ class Location(db.Model, TimestampMixin):
     parent_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     parent = db.relationship('Location', remote_side=[id], backref='children')
     image = db.Column(db.String)
+    custom_data = db.Column(db.Text)
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_by = db.relationship('User', foreign_keys=[created_by_id])
@@ -94,6 +97,7 @@ class Container(db.Model, TimestampMixin):
     color = db.Column(db.String)
     image = db.Column(db.String)
     missing = db.Column(db.Boolean, default=False)
+    custom_data = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -119,6 +123,7 @@ class Item(db.Model, TimestampMixin):
     quantity = db.Column(db.Integer, nullable=False)
     image = db.Column(db.String)
     missing = db.Column(db.Boolean, default=False)
+    custom_data = db.Column(db.Text)
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
@@ -235,6 +240,42 @@ def generate_qr(code: str):
     path = qr_path(code)
     img.save(path)
     return path
+
+
+def parse_custom_data(data_str):
+    if not data_str:
+        return None
+    try:
+        obj = json.loads(data_str)
+    except Exception:
+        obj = {}
+        for line in data_str.splitlines():
+            if ':' in line:
+                k, v = line.split(':', 1)
+            elif '=' in line:
+                k, v = line.split('=', 1)
+            else:
+                continue
+            obj[k.strip()] = v.strip()
+    return json.dumps(obj)
+
+
+def reassign_code(code):
+    existing = (Item.query.filter_by(code=code).first() or
+                Container.query.filter_by(code=code).first() or
+                Location.query.filter_by(code=code).first())
+    if existing:
+        prefix = existing.code.split('-')[0]
+        new_code = generate_code(prefix)
+        old_qr = qr_path(existing.code)
+        existing.code = new_code
+        db.session.commit()
+        if os.path.exists(old_qr):
+            os.remove(old_qr)
+        generate_qr(new_code)
+        log_action('regenerated code', item=existing if isinstance(existing, Item) else None,
+                   container=existing if isinstance(existing, Container) else None,
+                   location=existing if isinstance(existing, Location) else None)
 
 
 def save_image(file, code: str):
@@ -564,7 +605,8 @@ def item_detail(code):
         else:
             t = Location.query.get(tid)
             related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
-    return render_template('item_detail.html', item=item, related=related)
+    data = json.loads(item.custom_data) if item.custom_data else {}
+    return render_template('item_detail.html', item=item, related=related, custom_data=data)
 
 
 @app.route('/container/<code>')
@@ -589,7 +631,8 @@ def container_detail(code):
         else:
             t = Location.query.get(tid)
             related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
-    return render_template('container_detail.html', container=container, related=related)
+    data = json.loads(container.custom_data) if container.custom_data else {}
+    return render_template('container_detail.html', container=container, related=related, custom_data=data)
 
 
 @app.route('/location/<code>')
@@ -614,7 +657,8 @@ def location_detail(code):
         else:
             t = Location.query.get(tid)
             related.append({'name': t.full_path(), 'url': url_for('location_detail', code=t.code)})
-    return render_template('location_detail.html', location=location, related=related)
+    data = json.loads(location.custom_data) if location.custom_data else {}
+    return render_template('location_detail.html', location=location, related=related, custom_data=data)
 
 
 @app.route('/add/item', methods=['GET', 'POST'])
@@ -623,10 +667,14 @@ def add_item():
         name = request.form['name'].title()
         type_ = request.form['type'].title()
         quantity = int(request.form['quantity'])
-        code = generate_code('IT')
+        code = request.form.get('code') or generate_code('IT')
+        if request.form.get('code'):
+            reassign_code(code)
         img = save_image(request.files.get('image'), code)
+        custom_data = parse_custom_data(request.form.get('custom_data'))
         existing = Item.query.filter(db.func.lower(Item.name) == name.lower()).first()
         item = Item(name=name, type=type_, quantity=quantity, code=code, image=img,
+                    custom_data=custom_data,
                     created_by=current_user(), updated_by=current_user())
         db.session.add(item)
         db.session.commit()
@@ -642,7 +690,7 @@ def add_item():
         return redirect(url_for('item_detail', code=code))
     names = [n[0] for n in db.session.query(Item.name).distinct()]
     types = [t[0] for t in db.session.query(Item.type).distinct()]
-    return render_template('add_item.html', names=names, types=types)
+    return render_template('add_item.html', names=names, types=types, edit=False)
 
 
 @app.route('/add/container', methods=['GET', 'POST'])
@@ -651,10 +699,14 @@ def add_container():
         name = request.form['name'].title()
         size = request.form['size'].title()
         color = request.form['color'].title()
-        code = generate_code('CT')
+        code = request.form.get('code') or generate_code('CT')
+        if request.form.get('code'):
+            reassign_code(code)
         img = save_image(request.files.get('image'), code)
+        custom_data = parse_custom_data(request.form.get('custom_data'))
         container = Container(name=name, size=size, color=color,
                               code=code, image=img,
+                              custom_data=custom_data,
                               created_by=current_user(), updated_by=current_user())
         db.session.add(container)
         db.session.commit()
@@ -663,7 +715,7 @@ def add_container():
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
     colors = [c[0] for c in db.session.query(Container.color).filter(Container.color != None).distinct()]
-    return render_template('add_container.html', sizes=sizes, colors=colors)
+    return render_template('add_container.html', sizes=sizes, colors=colors, edit=False)
 
 
 @app.route('/add/location', methods=['GET', 'POST'])
@@ -672,9 +724,13 @@ def add_location():
     if request.method == 'POST':
         name = request.form['name'].title()
         parent_id = request.form.get('parent_id') or None
-        code = generate_code('LC')
+        code = request.form.get('code') or generate_code('LC')
+        if request.form.get('code'):
+            reassign_code(code)
         img = save_image(request.files.get('image'), code)
+        custom_data = parse_custom_data(request.form.get('custom_data'))
         location = Location(name=name, parent_id=parent_id, code=code, image=img,
+                             custom_data=custom_data,
                              created_by=current_user(), updated_by=current_user())
         db.session.add(location)
         db.session.commit()
@@ -682,7 +738,7 @@ def add_location():
         log_action('created location', location=location)
         return redirect(url_for('location_detail', code=code))
     names = [n[0] for n in db.session.query(Location.name).distinct()]
-    return render_template('add_location.html', locations=parents, names=names)
+    return render_template('add_location.html', locations=parents, names=names, edit=False)
 
 
 @app.route('/item/<code>/edit', methods=['GET', 'POST'])
@@ -695,6 +751,7 @@ def edit_item(code):
         img = save_image(request.files.get('image'), item.code)
         if img:
             item.image = img
+        item.custom_data = parse_custom_data(request.form.get('custom_data'))
         item.updated_by = current_user()
         db.session.commit()
         log_action('edited item', item=item)
@@ -723,6 +780,7 @@ def edit_container(code):
         img = save_image(request.files.get('image'), container.code)
         if img:
             container.image = img
+        container.custom_data = parse_custom_data(request.form.get('custom_data'))
         container.updated_by = current_user()
         db.session.commit()
         log_action('edited container', container=container)
@@ -809,6 +867,7 @@ def edit_location(code):
         img = save_image(request.files.get('image'), location.code)
         if img:
             location.image = img
+        location.custom_data = parse_custom_data(request.form.get('custom_data'))
         location.updated_by = current_user()
         db.session.commit()
         log_action('edited location', location=location)
@@ -1078,6 +1137,24 @@ def regenerate_code(code):
 @app.route('/scanner')
 def scanner():
     return render_template('scanner.html')
+
+
+@app.route('/qr/print', methods=['GET', 'POST'])
+def qr_print():
+    codes = []
+    zip_name = None
+    if request.method == 'POST':
+        count = int(request.form.get('count', '1'))
+        for _ in range(count):
+            code = generate_code('QR')
+            codes.append(code)
+            generate_qr(code)
+        zip_name = f"batch_{uuid.uuid4().hex}.zip"
+        zip_path = os.path.join('static', 'qr', zip_name)
+        with zipfile.ZipFile(zip_path, 'w') as zf:
+            for c in codes:
+                zf.write(qr_path(c), arcname=f'{c}.png')
+    return render_template('qr_print.html', codes=codes, zip_name=zip_name)
 
 
 if __name__ == '__main__':

@@ -11,6 +11,14 @@
   <tr><th>Created</th><td><span class="timestamp" data-ts="{{ location.created_at.isoformat() }}Z"></span> by {{ location.created_by.username if location.created_by else 'n/a' }}</td></tr>
   <tr><th>Updated</th><td><span class="timestamp" data-ts="{{ location.updated_at.isoformat() }}Z"></span> by {{ location.updated_by.username if location.updated_by else 'n/a' }}</td></tr>
 </table>
+{% if custom_data %}
+<h4>Custom Data</h4>
+<table class="table table-sm mb-3">
+  {% for k,v in custom_data.items() %}
+  <tr><th>{{ k }}</th><td>{{ v }}</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
 <div class="buttons-vertical">
   <a class="btn btn-info" href="/location/{{ location.code }}/edit">Edit</a>
   <form action="/location/{{ location.code }}/regen" method="post">

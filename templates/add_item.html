@@ -20,6 +20,16 @@
     <label class="form-label">Quantity</label>
     <input class="form-control" type="number" name="quantity" value="{{ item.quantity if edit else '1' }}" required>
   </div>
+  {% if not edit %}
+  <div class="mb-3">
+    <label class="form-label">Existing QR Code</label>
+    <input class="form-control" type="text" name="code" placeholder="Scan or enter code">
+  </div>
+  {% endif %}
+  <div class="mb-3">
+    <label class="form-label">Custom Data (JSON or key:value per line)</label>
+    <textarea class="form-control" name="custom_data" rows="3">{{ item.custom_data if edit else '' }}</textarea>
+  </div>
   <div class="mb-3">
     <label class="form-label">Image</label>
     <input class="form-control" type="file" name="image">
