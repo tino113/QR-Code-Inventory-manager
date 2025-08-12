@@ -28,13 +28,13 @@
 {% if codes %}
   <div class="mb-3">
     {% if zip_name %}
-    <a class="btn btn-secondary me-2" href="{{ url_for('static', filename='qr/' + zip_name) }}" download>Download ZIP</a>
+    <a class="btn btn-primary me-2" href="{{ url_for('static', filename='qr/' + zip_name) }}" download>Download ZIP</a>
     {% endif %}
     {% if pdf_name %}
-    <a class="btn btn-secondary me-2" href="{{ url_for('static', filename='qr/' + pdf_name) }}" download>Download PDF</a>
+    <a class="btn btn-primary me-2" href="{{ url_for('static', filename='qr/' + pdf_name) }}" download>Download PDF</a>
     {% endif %}
     {% if img_zip_name %}
-    <a class="btn btn-secondary" href="{{ url_for('static', filename='qr/' + img_zip_name) }}" download>Download Images</a>
+    <a class="btn btn-primary" href="{{ url_for('static', filename='qr/' + img_zip_name) }}" download>Download Page Images</a>
     {% endif %}
   </div>
   <div class="mb-3">

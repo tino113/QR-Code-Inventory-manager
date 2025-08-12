@@ -134,9 +134,9 @@ function handleScan(decodedText){
         }else{
           const msgDiv = document.getElementById('scan-message');
           msgDiv.innerHTML = `Unknown code. Add as:<div class="mt-2">`
-            + `<button class=\"btn btn-sm btn-secondary me-2\" onclick=\"location='/add/item?code=${decodedText}'\">Item</button>`
-            + `<button class=\"btn btn-sm btn-secondary me-2\" onclick=\"location='/add/container?code=${decodedText}'\">Container</button>`
-            + `<button class=\"btn btn-sm btn-secondary\" onclick=\"location='/add/location?code=${decodedText}'\">Location</button>`
+            + `<button class=\"btn btn-sm btn-primary me-2\" onclick=\"location='/add/item?code=${decodedText}'\">Item</button>`
+            + `<button class=\"btn btn-sm btn-primary me-2\" onclick=\"location='/add/container?code=${decodedText}'\">Container</button>`
+            + `<button class=\"btn btn-sm btn-primary\" onclick=\"location='/add/location?code=${decodedText}'\">Location</button>`
             + `</div>`;
         }
         }

@@ -5,7 +5,7 @@
   <img src="{{ url_for('static', filename=container.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
 {% endif %}
 <img src="{{ url_for('static', filename='qr/' + container.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
-<a class="btn btn-secondary mb-3 d-block mx-auto" download href="{{ url_for('static', filename='qr/' + container.code + '.png') }}">Download QR</a>
+<a class="btn btn-primary mb-3 d-block mx-auto" download href="{{ url_for('static', filename='qr/' + container.code + '.png') }}">Download QR</a>
 <table class="table table-sm mb-3">
   <tr><th>Code</th><td>{{ container.code }}</td></tr>
   <tr><th>Name</th><td>{{ container.name }}</td></tr>
@@ -26,7 +26,7 @@
 <div class="buttons-vertical">
   <a class="btn btn-info" href="/container/{{ container.code }}/edit">Edit</a>
   <a class="btn btn-warning" href="/container/{{ container.code }}/remove">Remove from location</a>
-  <a class="btn btn-secondary" href="/relation/add/container/{{ container.code }}">Add Relation</a>
+  <a class="btn btn-primary" href="/relation/add/container/{{ container.code }}">Add Relation</a>
   {% if container.missing %}
   <form action="/container/{{ container.code }}/found" method="post">
     <button class="btn btn-success w-100">Report Found</button>
@@ -36,7 +36,7 @@
     <button class="btn btn-danger w-100">Report Missing</button>
   </form>
   {% endif %}
-  <button class="btn btn-secondary w-100" type="button" id="scan-new-btn">Scan New QR</button>
+  <button class="btn btn-primary w-100" type="button" id="scan-new-btn">Scan New QR</button>
   <div id="scan-area" style="display:none" class="mt-2">
     <select id="camera-select" class="form-select mb-2"></select>
     <video id="video" style="width:100%;max-width:400px;" autoplay muted playsinline></video>
@@ -44,7 +44,7 @@
     <div id="scan-msg" class="text-danger small mt-1"></div>
   </div>
   <form action="/container/{{ container.code }}/regen" method="post">
-    <button class="btn btn-secondary w-100">New QR Code</button>
+    <button class="btn btn-primary w-100">New QR Code</button>
   </form>
   <a class="btn btn-danger" href="/container/{{ container.code }}/delete" onclick="return confirm('Delete container?');">Delete</a>
 </div>

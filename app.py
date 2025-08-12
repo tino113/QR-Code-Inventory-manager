@@ -191,11 +191,13 @@ def inject_user():
 
 
 @app.before_request
+@app.before_request
 def enforce_https():
     if (not request.is_secure and
+            request.headers.get('X-Forwarded-Proto', 'http') != 'https' and
             request.host.split(':')[0] not in ('localhost', '127.0.0.1')):
         url = request.url.replace('http://', 'https://', 1)
-        return redirect(url)
+        return redirect(url, code=301)
 
 
 @app.before_request
