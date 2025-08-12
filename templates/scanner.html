@@ -126,8 +126,20 @@ function handleScan(decodedText){
           }
         }, windowSlider.value * 1000);
       }else if(data.error){
-        msg.textContent = data.error;
-      }
+        const prefix = decodedText.split('-')[0];
+        const typeMap = { 'IT':'item', 'CT':'container', 'LC':'location' };
+        let t = typeMap[prefix];
+        if(t){
+          window.location = `/add/${t}?code=${decodedText}`;
+        }else{
+          const msgDiv = document.getElementById('scan-message');
+          msgDiv.innerHTML = `Unknown code. Add as:<div class="mt-2">`
+            + `<button class=\"btn btn-sm btn-primary me-2\" onclick=\"location='/add/item?code=${decodedText}'\">Item</button>`
+            + `<button class=\"btn btn-sm btn-primary me-2\" onclick=\"location='/add/container?code=${decodedText}'\">Container</button>`
+            + `<button class=\"btn btn-sm btn-primary\" onclick=\"location='/add/location?code=${decodedText}'\">Location</button>`
+            + `</div>`;
+        }
+        }
     });
 }
 

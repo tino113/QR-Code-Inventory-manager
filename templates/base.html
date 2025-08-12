@@ -25,12 +25,14 @@
         <a class="nav-link" href="/add/location">Add Location</a>
         <a class="nav-link" href="/scanner">Scanner</a>
         <a class="nav-link" href="/registrations">Register Pair</a>
+        <a class="nav-link" href="/qr/batch">Batch QR</a>
       </div>
       <div class="navbar-nav ms-auto align-items-center">
         <button id="theme-toggle" class="nav-link btn btn-link">🌙</button>
         {% if session.get('user_id') %}
           <a class="nav-link" href="/logs">Logs</a>
-          {% if current_user.username == 'admin' %}
+          {% if current_user.is_admin %}
+            <a class="nav-link" href="/admin/summary">Summary</a>
             <a class="nav-link" href="/admin/users">Users</a>
             <a class="nav-link" href="/admin/ssl">SSL</a>
           {% endif %}
