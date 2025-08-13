@@ -79,7 +79,7 @@ class Location(db.Model, TimestampMixin):
         for i in self.items:
             seen[i.id] = i
         for c in self.containers:
-            for i in c.items:
+            for i in c.all_items():
                 seen[i.id] = i
         for child in self.children:
             for i in child.all_items():
@@ -87,7 +87,9 @@ class Location(db.Model, TimestampMixin):
         return list(seen.values())
 
     def all_containers(self):
-        conts = list(self.containers)
+        conts = []
+        for c in self.containers:
+            conts.extend(c.all_containers())
         for child in self.children:
             conts.extend(child.all_containers())
         return conts
@@ -103,12 +105,26 @@ class Container(db.Model, TimestampMixin):
     missing = db.Column(db.Boolean, default=False)
     custom_data = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    parent_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_by = db.relationship('User', foreign_keys=[created_by_id])
     updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    parent = db.relationship('Container', remote_side=[id], backref='children')
     items = db.relationship('Item', backref='container', lazy=True)
     histories = db.relationship('History', backref='container', lazy=True)
+
+    def all_items(self):
+        items = list(self.items)
+        for child in self.children:
+            items.extend(child.all_items())
+        return items
+
+    def all_containers(self):
+        conts = [self]
+        for child in self.children:
+            conts.extend(child.all_containers())
+        return conts
 
     def path_from(self, loc):
         parts = []
@@ -1194,17 +1210,47 @@ def scan(code):
 
     now = dt.datetime.utcnow()
     window = float(request.args.get('window', 10))
-    last = session.get('last_scan')
     message = None
-    if last:
-        last_time = dt.datetime.fromisoformat(last['time'])
-        if (now - last_time).total_seconds() <= last.get('window', window) and last['code'] != code:
-            message = process_pair(last['code'], code)
-            session.pop('last_scan')
+    batch = session.get('batch_location')
+    if batch:
+        last_time = dt.datetime.fromisoformat(batch['time'])
+        if (now - last_time).total_seconds() > batch.get('window', window):
+            session.pop('batch_location')
+            batch = None
+    if batch and isinstance(obj, (Item, Container)):
+        message = process_pair(code, batch['code'])
+        session['batch_location'] = {'code': batch['code'], 'time': now.isoformat(), 'window': window}
+        session.pop('last_scan', None)
+    else:
+        last = session.get('last_scan')
+        if last:
+            last_time = dt.datetime.fromisoformat(last['time'])
+            if (now - last_time).total_seconds() <= last.get('window', window) and last['code'] != code:
+                message = process_pair(last['code'], code)
+                session.pop('last_scan')
+                first_obj = (Item.query.filter_by(code=last['code']).first() or
+                             Container.query.filter_by(code=last['code']).first() or
+                             Location.query.filter_by(code=last['code']).first())
+                if isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
+                    session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                elif isinstance(first_obj, Location) and isinstance(obj, (Item, Container)):
+                    session['batch_location'] = {'code': first_obj.code, 'time': now.isoformat(), 'window': window}
+                elif isinstance(first_obj, Location) and isinstance(obj, Location):
+                    session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                else:
+                    session.pop('batch_location', None)
+            else:
+                session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
+                if isinstance(obj, Location):
+                    session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+                else:
+                    session.pop('batch_location', None)
         else:
             session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
-    else:
-        session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
+            if isinstance(obj, Location):
+                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+            else:
+                session.pop('batch_location', None)
 
     if request.args.get('ajax'):
         name = getattr(obj, 'name', None)
@@ -1253,6 +1299,44 @@ def process_pair(first_code: str, second_code: str) -> str:
                                    user=current_user(), action='item to location',
                                    description=f'Item <b>{it.name}</b> was moved to <b>{second.name}</b>'))
         db.session.commit()
+        return msg
+    if isinstance(first, Container) and isinstance(second, Container):
+        first.parent = second
+        first.location = second.location
+        first.updated_by = current_user()
+        db.session.commit()
+        msg = f'Container <b>{first.name}</b> was moved into <b>{second.name}</b>'
+        log_action('container to container', container=first, location=second.location)
+        return msg
+    if isinstance(first, Location) and isinstance(second, Item):
+        second.location = first
+        second.container = None
+        second.updated_by = current_user()
+        db.session.commit()
+        msg = f'Item <b>{second.name}</b> was moved to <b>{first.name}</b>'
+        log_action('item to location', item=second, location=first)
+        return msg
+    if isinstance(first, Location) and isinstance(second, Container):
+        second.location = first
+        second.parent = None
+        second.updated_by = current_user()
+        db.session.commit()
+        msg = f'Container <b>{second.name}</b> was moved to <b>{first.name}</b>'
+        log_action('container to location', container=second, location=first)
+        for it in second.items:
+            it.location = first
+            it.updated_by = current_user()
+            db.session.add(History(item=it, location=first,
+                                   user=current_user(), action='item to location',
+                                   description=f'Item <b>{it.name}</b> was moved to <b>{first.name}</b>'))
+        db.session.commit()
+        return msg
+    if isinstance(first, Location) and isinstance(second, Location):
+        first.parent = second
+        first.updated_by = current_user()
+        db.session.commit()
+        msg = f'Location <b>{first.name}</b> was moved under <b>{second.name}</b>'
+        log_action('edited location', location=first)
         return msg
     return 'No action for scanned pair.'
 
