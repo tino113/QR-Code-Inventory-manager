@@ -70,16 +70,19 @@ class Location(db.Model, TimestampMixin):
     histories = db.relationship('History', backref='location', lazy=True)
 
     def full_path(self):
-        if self.parent:
-            return f"{self.parent.full_path()} / {self.name}"
-        return self.name
+        parts = [self.name]
+        cur = self.parent
+        while cur:
+            parts.append(cur.name)
+            cur = cur.parent
+        return ' / '.join(parts)
 
     def all_items(self):
         seen = {}
         for i in self.items:
             seen[i.id] = i
         for c in self.containers:
-            for i in c.items:
+            for i in c.all_items():
                 seen[i.id] = i
         for child in self.children:
             for i in child.all_items():
@@ -87,7 +90,9 @@ class Location(db.Model, TimestampMixin):
         return list(seen.values())
 
     def all_containers(self):
-        conts = list(self.containers)
+        conts = []
+        for c in self.containers:
+            conts.extend(c.all_containers())
         for child in self.children:
             conts.extend(child.all_containers())
         return conts
@@ -103,12 +108,34 @@ class Container(db.Model, TimestampMixin):
     missing = db.Column(db.Boolean, default=False)
     custom_data = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    parent_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_by = db.relationship('User', foreign_keys=[created_by_id])
     updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    parent = db.relationship('Container', remote_side=[id], backref='children')
     items = db.relationship('Item', backref='container', lazy=True)
     histories = db.relationship('History', backref='container', lazy=True)
+
+    def full_path(self):
+        parts = [self.name or self.code]
+        cur = self.parent
+        while cur:
+            parts.append(cur.name or cur.code)
+            cur = cur.parent
+        return ' / '.join(parts)
+
+    def all_items(self):
+        items = list(self.items)
+        for child in self.children:
+            items.extend(child.all_items())
+        return items
+
+    def all_containers(self):
+        conts = [self]
+        for child in self.children:
+            conts.extend(child.all_containers())
+        return conts
 
     def path_from(self, loc):
         parts = []
@@ -139,8 +166,10 @@ class Item(db.Model, TimestampMixin):
     def hierarchy(self):
         parts = []
         if self.container:
-            parts.append(self.container.name or self.container.code)
-        if self.location:
+            parts.append(self.container.full_path())
+            if self.container.location:
+                parts.append(self.container.location.full_path())
+        elif self.location:
             parts.append(self.location.full_path())
         return ' / '.join(parts)
 
@@ -148,7 +177,7 @@ class Item(db.Model, TimestampMixin):
         parts = []
         container = self.container
         if container:
-            parts.append(container.name or container.code)
+            parts.append(container.full_path())
             cur = container.location
         else:
             cur = self.location
@@ -321,6 +350,13 @@ def parse_custom_data(data_str):
                 continue
             obj[k.strip()] = v.strip()
     return json.dumps(obj)
+
+
+def maybe_title(value: str) -> str:
+    value = value.strip()
+    if value and value[0].isalpha():
+        return value.title()
+    return value
 
 
 def reassign_code(code):
@@ -852,8 +888,8 @@ def location_detail(code):
 @app.route('/add/item', methods=['GET', 'POST'])
 def add_item():
     if request.method == 'POST':
-        name = request.form['name'].title()
-        type_ = request.form['type'].title()
+        name = maybe_title(request.form['name'])
+        type_ = maybe_title(request.form['type'])
         quantity = int(request.form['quantity'])
         code = request.form.get('code') or generate_code('IT')
         if request.form.get('code'):
@@ -889,9 +925,9 @@ def add_item():
 @app.route('/add/container', methods=['GET', 'POST'])
 def add_container():
     if request.method == 'POST':
-        name = request.form['name'].title()
-        size = request.form['size'].title()
-        color = request.form['color'].title()
+        name = maybe_title(request.form['name'])
+        size = maybe_title(request.form['size'])
+        color = maybe_title(request.form['color'])
         code = request.form.get('code') or generate_code('CT')
         if request.form.get('code'):
             reassign_code(code)
@@ -920,7 +956,7 @@ def add_container():
 def add_location():
     parents = Location.query.all()
     if request.method == 'POST':
-        name = request.form['name'].title()
+        name = maybe_title(request.form['name'])
         parent_id = request.form.get('parent_id') or None
         code = request.form.get('code') or generate_code('LC')
         if request.form.get('code'):
@@ -944,8 +980,8 @@ def add_location():
 def edit_item(code):
     item = Item.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        item.name = request.form['name'].title()
-        item.type = request.form['type'].title()
+        item.name = maybe_title(request.form['name'])
+        item.type = maybe_title(request.form['type'])
         item.quantity = int(request.form['quantity'])
         img = save_image(request.files.get('image'), item.code)
         if img:
@@ -975,9 +1011,9 @@ def delete_item(code):
 def edit_container(code):
     container = Container.query.filter_by(code=code).first_or_404()
     if request.method == 'POST':
-        container.name = request.form['name'].title()
-        container.size = request.form['size'].title()
-        container.color = request.form['color'].title()
+        container.name = maybe_title(request.form['name'])
+        container.size = maybe_title(request.form['size'])
+        container.color = maybe_title(request.form['color'])
         img = save_image(request.files.get('image'), container.code)
         if img:
             container.image = img
@@ -1098,7 +1134,7 @@ def edit_location(code):
     location = Location.query.filter_by(code=code).first_or_404()
     parents = Location.query.filter(Location.id != location.id).all()
     if request.method == 'POST':
-        location.name = request.form['name'].title()
+        location.name = maybe_title(request.form['name'])
         parent_id = request.form.get('parent_id') or None
         location.parent_id = parent_id
         img = save_image(request.files.get('image'), location.code)
@@ -1194,17 +1230,103 @@ def scan(code):
 
     now = dt.datetime.utcnow()
     window = float(request.args.get('window', 10))
-    last = session.get('last_scan')
     message = None
-    if last:
-        last_time = dt.datetime.fromisoformat(last['time'])
-        if (now - last_time).total_seconds() <= last.get('window', window) and last['code'] != code:
-            message = process_pair(last['code'], code)
-            session.pop('last_scan')
+    handled = False
+
+    pending = session.get('pending_containers')
+    if pending:
+        last_time = dt.datetime.fromisoformat(pending['time'])
+        if (now - last_time).total_seconds() > pending.get('window', window):
+            process_pair(pending['first'], pending['second'])
+            session.pop('pending_containers')
+        else:
+            process_pair(pending['second'], pending['first'])
+            session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
+            session.pop('pending_containers')
+            if isinstance(obj, (Item, Container)):
+                message = process_pair(code, pending['first'])
+                session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
+                session.pop('last_scan', None)
+                handled = True
+            elif isinstance(obj, Location):
+                message = process_pair(pending['first'], code)
+                session.pop('batch_container', None)
+                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+                session.pop('last_scan', None)
+                handled = True
+
+    if not handled:
+        batch_c = session.get('batch_container')
+        if batch_c:
+            last_time = dt.datetime.fromisoformat(batch_c['time'])
+            if (now - last_time).total_seconds() > batch_c.get('window', window):
+                session.pop('batch_container')
+                batch_c = None
+        if batch_c and isinstance(obj, (Item, Container)):
+            message = process_pair(code, batch_c['code'])
+            session['batch_container'] = {'code': batch_c['code'], 'time': now.isoformat(), 'window': window}
+            session.pop('last_scan', None)
+            handled = True
+        elif batch_c and isinstance(obj, Location):
+            message = process_pair(batch_c['code'], code)
+            session.pop('batch_container')
+            session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+            session.pop('last_scan', None)
+            handled = True
+
+    if not handled:
+        batch = session.get('batch_location')
+        if batch:
+            last_time = dt.datetime.fromisoformat(batch['time'])
+            if (now - last_time).total_seconds() > batch.get('window', window):
+                session.pop('batch_location')
+                batch = None
+        if batch and isinstance(obj, (Item, Container)):
+            message = process_pair(code, batch['code'])
+            session['batch_location'] = {'code': batch['code'], 'time': now.isoformat(), 'window': window}
+            session.pop('last_scan', None)
+            handled = True
+
+    if not handled:
+        last = session.get('last_scan')
+        if last:
+            last_time = dt.datetime.fromisoformat(last['time'])
+            if ((now - last_time).total_seconds() <= last.get('window', window)
+                    and last['code'] != code):
+                first_obj = (Item.query.filter_by(code=last['code']).first() or
+                             Container.query.filter_by(code=last['code']).first() or
+                             Location.query.filter_by(code=last['code']).first())
+                if isinstance(first_obj, Container) and isinstance(obj, Item):
+                    message = process_pair(code, last['code'])
+                    session['batch_container'] = {'code': last['code'], 'time': now.isoformat(), 'window': window}
+                    session.pop('last_scan')
+                elif isinstance(first_obj, Container) and isinstance(obj, Container):
+                    session['pending_containers'] = {
+                        'first': last['code'],
+                        'second': code,
+                        'time': now.isoformat(),
+                        'window': window,
+                    }
+                    session.pop('last_scan')
+                else:
+                    message = process_pair(last['code'], code)
+                    session.pop('last_scan')
+                    if isinstance(obj, Container) and isinstance(first_obj, Item):
+                        session['batch_container'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                    elif isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
+                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                    elif isinstance(first_obj, Location) and isinstance(obj, (Item, Container)):
+                        session['batch_location'] = {'code': first_obj.code, 'time': now.isoformat(), 'window': window}
+                    elif isinstance(first_obj, Location) and isinstance(obj, Location):
+                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                    else:
+                        session.pop('batch_location', None)
         else:
             session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
-    else:
-        session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
+            if isinstance(obj, Location):
+                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+            else:
+                session.pop('batch_location', None)
 
     if request.args.get('ajax'):
         name = getattr(obj, 'name', None)
@@ -1253,6 +1375,48 @@ def process_pair(first_code: str, second_code: str) -> str:
                                    user=current_user(), action='item to location',
                                    description=f'Item <b>{it.name}</b> was moved to <b>{second.name}</b>'))
         db.session.commit()
+        return msg
+    if isinstance(first, Container) and isinstance(second, Container):
+        first.parent = second
+        first.location = second.location
+        first.updated_by = current_user()
+        db.session.commit()
+        msg = f'Container <b>{first.name}</b> was moved into <b>{second.name}</b>'
+        log_action('container to container', container=first, location=second.location,
+                   description=(
+                       f"Container <a href='{url_for('container_detail', code=first.code)}'><b>{first.name}</b></a> "
+                       f"was stored in <a href='{url_for('container_detail', code=second.code)}'><b>{second.name}</b></a>"
+                   ))
+        return msg
+    if isinstance(first, Location) and isinstance(second, Item):
+        second.location = first
+        second.container = None
+        second.updated_by = current_user()
+        db.session.commit()
+        msg = f'Item <b>{second.name}</b> was moved to <b>{first.name}</b>'
+        log_action('item to location', item=second, location=first)
+        return msg
+    if isinstance(first, Location) and isinstance(second, Container):
+        second.location = first
+        second.parent = None
+        second.updated_by = current_user()
+        db.session.commit()
+        msg = f'Container <b>{second.name}</b> was moved to <b>{first.name}</b>'
+        log_action('container to location', container=second, location=first)
+        for it in second.items:
+            it.location = first
+            it.updated_by = current_user()
+            db.session.add(History(item=it, location=first,
+                                   user=current_user(), action='item to location',
+                                   description=f'Item <b>{it.name}</b> was moved to <b>{first.name}</b>'))
+        db.session.commit()
+        return msg
+    if isinstance(first, Location) and isinstance(second, Location):
+        first.parent = second
+        first.updated_by = current_user()
+        db.session.commit()
+        msg = f'Location <b>{first.name}</b> was moved under <b>{second.name}</b>'
+        log_action('edited location', location=first)
         return msg
     return 'No action for scanned pair.'
 

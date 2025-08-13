@@ -11,7 +11,7 @@
   <tr><th>Type</th><td>{{ item.type }}</td></tr>
   <tr><th>Quantity</th><td>{{ item.quantity }}</td></tr>
   <tr><th>Location</th><td>{{ item.location.full_path() if item.location else '' }}</td></tr>
-  <tr><th>Container</th><td>{{ item.container.name if item.container else '' }}</td></tr>
+  <tr><th>Container</th><td>{% if item.container %}{{ item.container.full_path() }}{% endif %}</td></tr>
   <tr><th>Created</th><td><span class="timestamp" data-ts="{{ item.created_at.isoformat() }}Z"></span> by {{ item.created_by.username if item.created_by else 'n/a' }}</td></tr>
   <tr><th>Updated</th><td><span class="timestamp" data-ts="{{ item.updated_at.isoformat() }}Z"></span> by {{ item.updated_by.username if item.updated_by else 'n/a' }}</td></tr>
   <tr><th>Missing</th><td>{{ 'Yes' if item.missing else 'No' }}</td></tr>
@@ -61,7 +61,7 @@
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
           {% for h in item.histories|sort(attribute='timestamp', reverse=True) %}
-            <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}Z"></span> - {{ h.action }}{% if h.location %} {{ h.location.full_path() }}{% elif h.container %} {{ h.container.name or h.container.code }}{% endif %}{% if h.user %} by {{ h.user.username }}{% endif %}</li>
+            <li class="list-group-item"><span class="timestamp" data-ts="{{ h.timestamp.isoformat() }}Z"></span> - {{ h.action }}{% if h.location %} {{ h.location.full_path() }}{% elif h.container %} {{ h.container.full_path() }}{% endif %}{% if h.user %} by {{ h.user.username }}{% endif %}</li>
           {% endfor %}
         </ul>
       </div>
