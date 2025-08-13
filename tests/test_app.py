@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from app import app, db, Item, Location, Container, qr_path, generate_qr, User
+from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History
 
 
 def setup_module(module):
@@ -172,4 +172,191 @@ def test_location_unique_items():
         loc = Location.query.filter_by(code=loc_code).first()
         names = [i.name for i in loc.all_items() if i.name == 'Hammer']
         assert len(names) == 1
+
+
+def test_scan_container_pair_timeout():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        c1 = Container(name='Inner', code='CT-inner', created_by=u, updated_by=u, location=loc)
+        c2 = Container(name='Outer', code='CT-outer', created_by=u, updated_by=u, location=loc)
+        dummy = Item(name='Temp', type='Tool', quantity=1, code='IT-temp', created_by=u, updated_by=u)
+        db.session.add_all([c1, c2, dummy])
+        db.session.commit()
+        for code in (c1.code, c2.code, dummy.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{c1.code}')
+    client.get(f'/scan/{c2.code}?window=0')
+    client.get(f'/scan/{dummy.code}')
+    with app.app_context():
+        inner = Container.query.filter_by(code='CT-inner').first()
+        outer = Container.query.filter_by(code='CT-outer').first()
+        assert inner.parent_id == outer.id
+        assert inner.location_id == outer.location_id
+
+
+def test_scan_multiple_items_to_container():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        cont = Container(name='Box3', code='CT-box3', created_by=u, updated_by=u, location=loc)
+        i1 = Item(name='Screwdriver', type='Tool', quantity=1, code='IT-screw2', created_by=u, updated_by=u)
+        i2 = Item(name='Wrench', type='Tool', quantity=1, code='IT-wrench2', created_by=u, updated_by=u)
+        db.session.add_all([cont, i1, i2])
+        db.session.commit()
+        for code in (cont.code, i1.code, i2.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{cont.code}')
+    client.get(f'/scan/{i1.code}')
+    client.get(f'/scan/{i2.code}')
+    with app.app_context():
+        cont = Container.query.filter_by(code='CT-box3').first()
+        i1 = Item.query.filter_by(code='IT-screw2').first()
+        i2 = Item.query.filter_by(code='IT-wrench2').first()
+        assert i1.container_id == cont.id
+        assert i2.container_id == cont.id
+
+
+def test_scan_container_container_with_followups():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        c1 = Container(name='Parent', code='CT-parent', created_by=u, updated_by=u, location=loc)
+        c2 = Container(name='Child', code='CT-child', created_by=u, updated_by=u, location=loc)
+        i1 = Item(name='Pliers', type='Tool', quantity=1, code='IT-pliers2', created_by=u, updated_by=u)
+        i2 = Item(name='Tape', type='Tool', quantity=1, code='IT-tape2', created_by=u, updated_by=u)
+        db.session.add_all([c1, c2, i1, i2])
+        db.session.commit()
+        for code in (c1.code, c2.code, i1.code, i2.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{c1.code}')
+    client.get(f'/scan/{c2.code}')
+    client.get(f'/scan/{i1.code}')
+    client.get(f'/scan/{i2.code}')
+    with app.app_context():
+        c1 = Container.query.filter_by(code='CT-parent').first()
+        c2 = Container.query.filter_by(code='CT-child').first()
+        i1 = Item.query.filter_by(code='IT-pliers2').first()
+        i2 = Item.query.filter_by(code='IT-tape2').first()
+        assert c2.parent_id == c1.id
+        assert i1.container_id == c1.id
+        assert i2.container_id == c1.id
+
+
+def test_location_path_order_and_title_case_numbers():
+    client = app.test_client()
+    login(client)
+    client.post('/add/location', data={'name': 'Room A', 'code': 'LC-rooma'}, follow_redirects=True)
+    with app.app_context():
+        parent = Location.query.filter_by(code='LC-rooma').one()
+    client.post('/add/location', data={'name': '2nd floor', 'code': 'LC-2nd', 'parent_id': parent.id}, follow_redirects=True)
+    with app.app_context():
+        child = Location.query.filter_by(code='LC-2nd').one()
+        assert child.name == '2nd floor'
+        assert child.full_path() == '2nd floor / Room A'
+
+
+def test_container_full_path_and_item_hierarchy():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location(name='LocX', code='LC-locx', created_by=u, updated_by=u)
+        outer = Container(name='Big Box', code='CT-bigbox', created_by=u, updated_by=u, location=loc)
+        inner = Container(name='Little Box', code='CT-littlebox', created_by=u, updated_by=u, location=loc, parent=outer)
+        item = Item(name='Widget', type='Tool', quantity=1, code='IT-widget', created_by=u, updated_by=u, container=inner)
+        db.session.add_all([loc, outer, inner, item])
+        db.session.commit()
+        assert inner.full_path() == 'Little Box / Big Box'
+        assert item.hierarchy() == f'Little Box / Big Box / {loc.full_path()}'
+
+
+def test_container_to_container_log_links():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-locx').first()
+        c1 = Container(name='ChildLog', code='CT-childlog', created_by=u, updated_by=u, location=loc)
+        c2 = Container(name='ParentLog', code='CT-parentlog', created_by=u, updated_by=u, location=loc)
+        dummy = Item(name='Dummy', type='Tool', quantity=1, code='IT-dummylog', created_by=u, updated_by=u)
+        db.session.add_all([c1, c2, dummy])
+        db.session.commit()
+        for code in (c1.code, c2.code, dummy.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{c1.code}')
+    client.get(f'/scan/{c2.code}?window=0')
+    client.get(f'/scan/{dummy.code}')
+    with app.app_context():
+        h = History.query.filter_by(action='container to container').order_by(History.timestamp.desc()).first()
+        assert f"/container/{c1.code}" in h.description
+        assert f"/container/{c2.code}" in h.description
+        assert 'ChildLog' in h.description and 'ParentLog' in h.description
+
+
+def test_scan_location_in_location():
+    import time
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        parent = Location(name='Parent', code='LC-parent')
+        child = Location(name='Child', code='LC-child')
+        db.session.add_all([parent, child])
+        db.session.commit()
+        for code in (parent.code, child.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{child.code}')
+    time.sleep(1)
+    client.get(f'/scan/{parent.code}')
+    with app.app_context():
+        child = Location.query.filter_by(code='LC-child').first()
+        parent = Location.query.filter_by(code='LC-parent').first()
+        assert child.parent_id == parent.id
+
+
+def test_scan_multiple_items_to_location():
+    import time
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc1 = Location(name='Room2', code='LC-room2')
+        loc2 = Location(name='Room3', code='LC-room3')
+        i1 = Item(name='Screwdriver', type='Tool', quantity=1, code='IT-screw', created_by=u, updated_by=u)
+        i2 = Item(name='Wrench', type='Tool', quantity=1, code='IT-wrench', created_by=u, updated_by=u)
+        i3 = Item(name='Pliers', type='Tool', quantity=1, code='IT-pliers', created_by=u, updated_by=u)
+        db.session.add_all([loc1, loc2, i1, i2, i3])
+        db.session.commit()
+        for code in (loc1.code, loc2.code, i1.code, i2.code, i3.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{loc1.code}')
+    time.sleep(1)
+    client.get(f'/scan/{i1.code}')
+    time.sleep(1)
+    client.get(f'/scan/{i2.code}')
+    time.sleep(1)
+    client.get(f'/scan/{loc2.code}')
+    time.sleep(1)
+    client.get(f'/scan/{i3.code}')
+    with app.app_context():
+        loc1 = Location.query.filter_by(code='LC-room2').first()
+        loc2 = Location.query.filter_by(code='LC-room3').first()
+        i1 = Item.query.filter_by(code='IT-screw').first()
+        i2 = Item.query.filter_by(code='IT-wrench').first()
+        i3 = Item.query.filter_by(code='IT-pliers').first()
+        assert i1.location_id == loc1.id
+        assert i2.location_id == loc1.id
+        assert i3.location_id == loc2.id
 
