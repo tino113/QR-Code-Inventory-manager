@@ -1211,40 +1211,96 @@ def scan(code):
     now = dt.datetime.utcnow()
     window = float(request.args.get('window', 10))
     message = None
-    batch = session.get('batch_location')
-    if batch:
-        last_time = dt.datetime.fromisoformat(batch['time'])
-        if (now - last_time).total_seconds() > batch.get('window', window):
-            session.pop('batch_location')
-            batch = None
-    if batch and isinstance(obj, (Item, Container)):
-        message = process_pair(code, batch['code'])
-        session['batch_location'] = {'code': batch['code'], 'time': now.isoformat(), 'window': window}
-        session.pop('last_scan', None)
-    else:
+    handled = False
+
+    pending = session.get('pending_containers')
+    if pending:
+        last_time = dt.datetime.fromisoformat(pending['time'])
+        if (now - last_time).total_seconds() > pending.get('window', window):
+            process_pair(pending['first'], pending['second'])
+            session.pop('pending_containers')
+        else:
+            process_pair(pending['second'], pending['first'])
+            session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
+            session.pop('pending_containers')
+            if isinstance(obj, (Item, Container)):
+                message = process_pair(code, pending['first'])
+                session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
+                session.pop('last_scan', None)
+                handled = True
+            elif isinstance(obj, Location):
+                message = process_pair(pending['first'], code)
+                session.pop('batch_container', None)
+                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+                session.pop('last_scan', None)
+                handled = True
+
+    if not handled:
+        batch_c = session.get('batch_container')
+        if batch_c:
+            last_time = dt.datetime.fromisoformat(batch_c['time'])
+            if (now - last_time).total_seconds() > batch_c.get('window', window):
+                session.pop('batch_container')
+                batch_c = None
+        if batch_c and isinstance(obj, (Item, Container)):
+            message = process_pair(code, batch_c['code'])
+            session['batch_container'] = {'code': batch_c['code'], 'time': now.isoformat(), 'window': window}
+            session.pop('last_scan', None)
+            handled = True
+        elif batch_c and isinstance(obj, Location):
+            message = process_pair(batch_c['code'], code)
+            session.pop('batch_container')
+            session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
+            session.pop('last_scan', None)
+            handled = True
+
+    if not handled:
+        batch = session.get('batch_location')
+        if batch:
+            last_time = dt.datetime.fromisoformat(batch['time'])
+            if (now - last_time).total_seconds() > batch.get('window', window):
+                session.pop('batch_location')
+                batch = None
+        if batch and isinstance(obj, (Item, Container)):
+            message = process_pair(code, batch['code'])
+            session['batch_location'] = {'code': batch['code'], 'time': now.isoformat(), 'window': window}
+            session.pop('last_scan', None)
+            handled = True
+
+    if not handled:
         last = session.get('last_scan')
         if last:
             last_time = dt.datetime.fromisoformat(last['time'])
-            if (now - last_time).total_seconds() <= last.get('window', window) and last['code'] != code:
-                message = process_pair(last['code'], code)
-                session.pop('last_scan')
+            if ((now - last_time).total_seconds() <= last.get('window', window)
+                    and last['code'] != code):
                 first_obj = (Item.query.filter_by(code=last['code']).first() or
                              Container.query.filter_by(code=last['code']).first() or
                              Location.query.filter_by(code=last['code']).first())
-                if isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
-                    session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                elif isinstance(first_obj, Location) and isinstance(obj, (Item, Container)):
-                    session['batch_location'] = {'code': first_obj.code, 'time': now.isoformat(), 'window': window}
-                elif isinstance(first_obj, Location) and isinstance(obj, Location):
-                    session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                if isinstance(first_obj, Container) and isinstance(obj, Item):
+                    message = process_pair(code, last['code'])
+                    session['batch_container'] = {'code': last['code'], 'time': now.isoformat(), 'window': window}
+                    session.pop('last_scan')
+                elif isinstance(first_obj, Container) and isinstance(obj, Container):
+                    session['pending_containers'] = {
+                        'first': last['code'],
+                        'second': code,
+                        'time': now.isoformat(),
+                        'window': window,
+                    }
+                    session.pop('last_scan')
                 else:
-                    session.pop('batch_location', None)
-            else:
-                session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
-                if isinstance(obj, Location):
-                    session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-                else:
-                    session.pop('batch_location', None)
+                    message = process_pair(last['code'], code)
+                    session.pop('last_scan')
+                    if isinstance(obj, Container) and isinstance(first_obj, Item):
+                        session['batch_container'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                    elif isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
+                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                    elif isinstance(first_obj, Location) and isinstance(obj, (Item, Container)):
+                        session['batch_location'] = {'code': first_obj.code, 'time': now.isoformat(), 'window': window}
+                    elif isinstance(first_obj, Location) and isinstance(obj, Location):
+                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
+                    else:
+                        session.pop('batch_location', None)
         else:
             session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
             if isinstance(obj, Location):

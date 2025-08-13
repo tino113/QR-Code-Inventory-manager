@@ -174,8 +174,7 @@ def test_location_unique_items():
         assert len(names) == 1
 
 
-def test_scan_container_in_container():
-    import time
+def test_scan_container_pair_timeout():
     client = app.test_client()
     login(client)
     with app.app_context():
@@ -183,19 +182,74 @@ def test_scan_container_in_container():
         loc = Location.query.filter_by(code='LC-testloc').first()
         c1 = Container(name='Inner', code='CT-inner', created_by=u, updated_by=u, location=loc)
         c2 = Container(name='Outer', code='CT-outer', created_by=u, updated_by=u, location=loc)
-        db.session.add_all([c1, c2])
+        dummy = Item(name='Temp', type='Tool', quantity=1, code='IT-temp', created_by=u, updated_by=u)
+        db.session.add_all([c1, c2, dummy])
         db.session.commit()
-        for code in (c1.code, c2.code):
+        for code in (c1.code, c2.code, dummy.code):
             if not Path(qr_path(code)).exists():
                 generate_qr(code)
     client.get(f'/scan/{c1.code}')
-    time.sleep(1)
-    client.get(f'/scan/{c2.code}')
+    client.get(f'/scan/{c2.code}?window=0')
+    client.get(f'/scan/{dummy.code}')
     with app.app_context():
         inner = Container.query.filter_by(code='CT-inner').first()
         outer = Container.query.filter_by(code='CT-outer').first()
         assert inner.parent_id == outer.id
         assert inner.location_id == outer.location_id
+
+
+def test_scan_multiple_items_to_container():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        cont = Container(name='Box3', code='CT-box3', created_by=u, updated_by=u, location=loc)
+        i1 = Item(name='Screwdriver', type='Tool', quantity=1, code='IT-screw2', created_by=u, updated_by=u)
+        i2 = Item(name='Wrench', type='Tool', quantity=1, code='IT-wrench2', created_by=u, updated_by=u)
+        db.session.add_all([cont, i1, i2])
+        db.session.commit()
+        for code in (cont.code, i1.code, i2.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{cont.code}')
+    client.get(f'/scan/{i1.code}')
+    client.get(f'/scan/{i2.code}')
+    with app.app_context():
+        cont = Container.query.filter_by(code='CT-box3').first()
+        i1 = Item.query.filter_by(code='IT-screw2').first()
+        i2 = Item.query.filter_by(code='IT-wrench2').first()
+        assert i1.container_id == cont.id
+        assert i2.container_id == cont.id
+
+
+def test_scan_container_container_with_followups():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-testloc').first()
+        c1 = Container(name='Parent', code='CT-parent', created_by=u, updated_by=u, location=loc)
+        c2 = Container(name='Child', code='CT-child', created_by=u, updated_by=u, location=loc)
+        i1 = Item(name='Pliers', type='Tool', quantity=1, code='IT-pliers2', created_by=u, updated_by=u)
+        i2 = Item(name='Tape', type='Tool', quantity=1, code='IT-tape2', created_by=u, updated_by=u)
+        db.session.add_all([c1, c2, i1, i2])
+        db.session.commit()
+        for code in (c1.code, c2.code, i1.code, i2.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{c1.code}')
+    client.get(f'/scan/{c2.code}')
+    client.get(f'/scan/{i1.code}')
+    client.get(f'/scan/{i2.code}')
+    with app.app_context():
+        c1 = Container.query.filter_by(code='CT-parent').first()
+        c2 = Container.query.filter_by(code='CT-child').first()
+        i1 = Item.query.filter_by(code='IT-pliers2').first()
+        i2 = Item.query.filter_by(code='IT-tape2').first()
+        assert c2.parent_id == c1.id
+        assert i1.container_id == c1.id
+        assert i2.container_id == c1.id
 
 
 def test_scan_location_in_location():
