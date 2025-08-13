@@ -19,7 +19,7 @@
       <select class="form-select" name="container">
         <option value="">Container</option>
         {% for c in all_containers %}
-          <option value="{{ c.id }}" {% if request.args.get('container')==c.id|string %}selected{% endif %}>{{ c.name or c.code }}</option>
+          <option value="{{ c.id }}" {% if request.args.get('container')==c.id|string %}selected{% endif %}>{{ c.full_path() }}</option>
         {% endfor %}
       </select>
     </div>
@@ -52,7 +52,7 @@
         <ul class="list-group list-group-flush">
         {% for c in containers %}
           <li class="list-group-item">
-            <span title="container">📦</span> <a href="/container/{{ c.code }}">{{ c.name or c.code }}{% if c.location %} / {{ c.location.full_path() }}{% endif %}</a>
+            <span title="container">📦</span> <a href="/container/{{ c.code }}">{{ c.full_path() }}{% if c.location %} / {{ c.location.full_path() }}{% endif %}</a>
           </li>
         {% endfor %}
         </ul>

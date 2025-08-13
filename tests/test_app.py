@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from app import app, db, Item, Location, Container, qr_path, generate_qr, User
+from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History
 
 
 def setup_module(module):
@@ -250,6 +250,58 @@ def test_scan_container_container_with_followups():
         assert c2.parent_id == c1.id
         assert i1.container_id == c1.id
         assert i2.container_id == c1.id
+
+
+def test_location_path_order_and_title_case_numbers():
+    client = app.test_client()
+    login(client)
+    client.post('/add/location', data={'name': 'Room A', 'code': 'LC-rooma'}, follow_redirects=True)
+    with app.app_context():
+        parent = Location.query.filter_by(code='LC-rooma').one()
+    client.post('/add/location', data={'name': '2nd floor', 'code': 'LC-2nd', 'parent_id': parent.id}, follow_redirects=True)
+    with app.app_context():
+        child = Location.query.filter_by(code='LC-2nd').one()
+        assert child.name == '2nd floor'
+        assert child.full_path() == '2nd floor / Room A'
+
+
+def test_container_full_path_and_item_hierarchy():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location(name='LocX', code='LC-locx', created_by=u, updated_by=u)
+        outer = Container(name='Big Box', code='CT-bigbox', created_by=u, updated_by=u, location=loc)
+        inner = Container(name='Little Box', code='CT-littlebox', created_by=u, updated_by=u, location=loc, parent=outer)
+        item = Item(name='Widget', type='Tool', quantity=1, code='IT-widget', created_by=u, updated_by=u, container=inner)
+        db.session.add_all([loc, outer, inner, item])
+        db.session.commit()
+        assert inner.full_path() == 'Little Box / Big Box'
+        assert item.hierarchy() == f'Little Box / Big Box / {loc.full_path()}'
+
+
+def test_container_to_container_log_links():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location.query.filter_by(code='LC-locx').first()
+        c1 = Container(name='ChildLog', code='CT-childlog', created_by=u, updated_by=u, location=loc)
+        c2 = Container(name='ParentLog', code='CT-parentlog', created_by=u, updated_by=u, location=loc)
+        dummy = Item(name='Dummy', type='Tool', quantity=1, code='IT-dummylog', created_by=u, updated_by=u)
+        db.session.add_all([c1, c2, dummy])
+        db.session.commit()
+        for code in (c1.code, c2.code, dummy.code):
+            if not Path(qr_path(code)).exists():
+                generate_qr(code)
+    client.get(f'/scan/{c1.code}')
+    client.get(f'/scan/{c2.code}?window=0')
+    client.get(f'/scan/{dummy.code}')
+    with app.app_context():
+        h = History.query.filter_by(action='container to container').order_by(History.timestamp.desc()).first()
+        assert f"/container/{c1.code}" in h.description
+        assert f"/container/{c2.code}" in h.description
+        assert 'ChildLog' in h.description and 'ParentLog' in h.description
 
 
 def test_scan_location_in_location():

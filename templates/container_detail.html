@@ -11,6 +11,8 @@
   <tr><th>Name</th><td>{{ container.name }}</td></tr>
   <tr><th>Size</th><td>{{ container.size }}</td></tr>
   <tr><th>Color</th><td>{{ container.color }}</td></tr>
+  <tr><th>Hierarchy</th><td>{{ container.full_path() }}</td></tr>
+  <tr><th>Parent Container</th><td>{% if container.parent %}<a href="/container/{{ container.parent.code }}">{{ container.parent.name or container.parent.code }}</a>{% endif %}</td></tr>
   <tr><th>Location</th><td>{{ container.location.full_path() if container.location else '' }}</td></tr>
   <tr><th>Created</th><td><span class="timestamp" data-ts="{{ container.created_at.isoformat() }}Z"></span> by {{ container.created_by.username if container.created_by else 'n/a' }}</td></tr>
   <tr><th>Updated</th><td><span class="timestamp" data-ts="{{ container.updated_at.isoformat() }}Z"></span> by {{ container.updated_by.username if container.updated_by else 'n/a' }}</td></tr>
@@ -57,8 +59,21 @@
       <div class="accordion-body p-0">
         <ul class="list-group list-group-flush">
         {% for item in container.items %}
-          {% set loc = item.location.full_path() if item.location else (container.location.full_path() if container.location else '') %}
-          <li class="list-group-item"><a href="/item/{{ item.code }}">{{ item.name }} ({{ item.quantity }}){% if loc %} / {{ loc }}{% endif %}</a></li>
+          <li class="list-group-item"><a href="/item/{{ item.code }}">{{ item.name }} ({{ item.quantity }}){% if item.hierarchy() %} / {{ item.hierarchy() }}{% endif %}</a></li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingContainers">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContainers">Containers</button>
+    </h2>
+    <div id="collapseContainers" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for c in container.children %}
+          <li class="list-group-item"><a href="/container/{{ c.code }}">{{ c.full_path() }}</a></li>
         {% endfor %}
         </ul>
       </div>
