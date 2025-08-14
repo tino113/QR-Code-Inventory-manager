@@ -9,17 +9,22 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import or_, and_
+from sqlalchemy.orm import foreign
 import qrcode
 import glob
 import json
 import zipfile
 from PIL import Image
 import math
+import shutil
 from difflib import SequenceMatcher
 
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///inventory.db'
+app.config['SQLALCHEMY_BINDS'] = {
+    'users': 'sqlite:///users.db'
+}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -36,6 +41,7 @@ class TimestampMixin:
 
 
 class User(db.Model):
+    __bind_key__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String, unique=True, nullable=False)
     password_hash = db.Column(db.String, nullable=False)
@@ -60,10 +66,14 @@ class Location(db.Model, TimestampMixin):
     parent = db.relationship('Location', remote_side=[id], backref='children')
     image = db.Column(db.String)
     custom_data = db.Column(db.Text)
-    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_by = db.relationship('User', foreign_keys=[created_by_id])
-    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    created_by_id = db.Column(db.Integer)
+    updated_by_id = db.Column(db.Integer)
+    created_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Location.created_by_id)',
+                                 foreign_keys=[created_by_id])
+    updated_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Location.updated_by_id)',
+                                 foreign_keys=[updated_by_id])
 
     items = db.relationship('Item', backref='location', lazy=True)
     containers = db.relationship('Container', backref='location', lazy=True)
@@ -109,10 +119,14 @@ class Container(db.Model, TimestampMixin):
     custom_data = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     parent_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_by = db.relationship('User', foreign_keys=[created_by_id])
-    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    created_by_id = db.Column(db.Integer)
+    updated_by_id = db.Column(db.Integer)
+    created_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Container.created_by_id)',
+                                 foreign_keys=[created_by_id])
+    updated_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Container.updated_by_id)',
+                                 foreign_keys=[updated_by_id])
     parent = db.relationship('Container', remote_side=[id], backref='children')
     items = db.relationship('Item', backref='container', lazy=True)
     histories = db.relationship('History', backref='container', lazy=True)
@@ -157,10 +171,14 @@ class Item(db.Model, TimestampMixin):
     custom_data = db.Column(db.Text)
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_by = db.relationship('User', foreign_keys=[created_by_id])
-    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    created_by_id = db.Column(db.Integer)
+    updated_by_id = db.Column(db.Integer)
+    created_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Item.created_by_id)',
+                                 foreign_keys=[created_by_id])
+    updated_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Item.updated_by_id)',
+                                 foreign_keys=[updated_by_id])
     histories = db.relationship('History', backref='item', lazy=True)
 
     def hierarchy(self):
@@ -193,10 +211,13 @@ class History(db.Model):
     item_id = db.Column(db.Integer, db.ForeignKey('item.id'))
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer)
     action = db.Column(db.String)
     description = db.Column(db.Text)
-    user = db.relationship('User', backref='histories')
+    user = db.relationship('User',
+                           primaryjoin='User.id==foreign(History.user_id)',
+                           foreign_keys=[user_id],
+                           backref='histories')
 
 
 class Relation(db.Model):
@@ -244,19 +265,49 @@ def ensure_admin():
         db.session.add(admin)
         db.session.commit()
 
+
+def migrate_sqlite(path, models, bind=None):
+    db.session.remove()
+    engine = db.get_engine(app, bind=bind) if bind else db.engine
+    if not os.path.exists(path):
+        db.create_all(bind_key=bind)
+        return
+    import sqlite3
+    conn = sqlite3.connect(path)
+    cur = conn.cursor()
+    for model in models:
+        table = model.__tablename__
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+        if not cur.fetchone():
+            model.__table__.create(bind=engine, checkfirst=True)
+            continue
+        cur.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cur.fetchall()}
+        for col in model.__table__.columns:
+            if col.name not in existing:
+                coltype = col.type.compile(engine.dialect)
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {col.name} {coltype}")
+    conn.commit()
+    conn.close()
+    db.create_all(bind_key=bind)
+
 def setup_database():
-    try:
-        db.create_all()
-        # issue simple selects to ensure all tables match the models;
-        # missing columns will raise an OperationalError which triggers
-        # a full rebuild of the schema
-        for model in (User, Location, Container, Item, History, Relation):
+    db.create_all()
+    inventory_models = (Location, Container, Item, History, Relation)
+    user_models = (User,)
+    for model in inventory_models:
+        try:
             db.session.query(model).first()
-        ensure_admin()
-    except Exception:
-        db.drop_all()
-        db.create_all()
-        ensure_admin()
+        except Exception:
+            migrate_sqlite('inventory.db', inventory_models)
+            break
+    for model in user_models:
+        try:
+            db.session.query(model).first()
+        except Exception:
+            migrate_sqlite('users.db', user_models, bind='users')
+            break
+    ensure_admin()
 
 
 with app.app_context():
@@ -357,6 +408,34 @@ def maybe_title(value: str) -> str:
     if value and value[0].isalpha():
         return value.title()
     return value
+
+
+def create_items_from_spec(container, spec: str):
+    for part in spec.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        tokens = part.split()
+        if not tokens:
+            continue
+        name = maybe_title(tokens[0])
+        quantity = 1
+        type_ = 'Misc'
+        if len(tokens) > 1:
+            if tokens[1].isdigit():
+                quantity = int(tokens[1])
+                if len(tokens) > 2:
+                    type_ = maybe_title(' '.join(tokens[2:]))
+            else:
+                type_ = maybe_title(' '.join(tokens[1:]))
+        code = generate_code('IT')
+        item = Item(name=name, type=type_, quantity=quantity, code=code,
+                    container=container, location=container.location,
+                    created_by=current_user(), updated_by=current_user())
+        db.session.add(item)
+        db.session.flush()
+        generate_qr(code)
+        log_action('created item', item=item)
 
 
 def reassign_code(code):
@@ -807,6 +886,24 @@ def admin_ssl():
     return render_template('admin_ssl.html')
 
 
+@app.route('/admin/upload', methods=['GET', 'POST'])
+def admin_upload_db():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    if request.method == 'POST':
+        file = request.files.get('dbfile')
+        if file and file.filename:
+            filename = secure_filename(file.filename)
+            temp = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(temp)
+            shutil.move(temp, 'inventory.db')
+            migrate_sqlite('inventory.db', (Location, Container, Item, History, Relation))
+            flash('Database uploaded and migrated', 'info')
+            return redirect(url_for('index'))
+    return render_template('upload_db.html')
+
+
 @app.route('/item/<code>')
 def item_detail(code):
     item = Item.query.filter_by(code=code).first_or_404()
@@ -941,6 +1038,10 @@ def add_container():
                               created_by=current_user(), updated_by=current_user())
         db.session.add(container)
         db.session.commit()
+        items_spec = request.form.get('items', '').strip()
+        if items_spec:
+            create_items_from_spec(container, items_spec)
+            db.session.commit()
         generate_qr(code)
         log_action('created container', container=container)
         return redirect(url_for('container_detail', code=code))
@@ -1020,6 +1121,10 @@ def edit_container(code):
         container.custom_data = parse_custom_data(request.form.get('custom_data'))
         container.updated_by = current_user()
         db.session.commit()
+        items_spec = request.form.get('items', '').strip()
+        if items_spec:
+            create_items_from_spec(container, items_spec)
+            db.session.commit()
         log_action('edited container', container=container)
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]

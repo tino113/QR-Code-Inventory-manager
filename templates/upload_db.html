@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Upload Database</h2>
+<form method="post" enctype="multipart/form-data">
+  <input type="file" name="dbfile" required>
+  <button type="submit">Upload</button>
+</form>
+{% endblock %}

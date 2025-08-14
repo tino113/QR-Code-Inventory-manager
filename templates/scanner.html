@@ -35,13 +35,16 @@ function addLog(text) {
   logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">${time} - ${text}</li>`);
 }
 
-function beep(){
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const osc = ctx.createOscillator();
-  osc.frequency.value = 440;
-  osc.connect(ctx.destination);
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function beep(freq = 440){
+  const osc = audioCtx.createOscillator();
+  osc.frequency.value = freq;
+  osc.connect(audioCtx.destination);
   osc.start();
-  setTimeout(()=>osc.stop(),150);
+  setTimeout(()=>{
+    osc.stop();
+    osc.disconnect();
+  },150);
 }
 
 let stream = null;
@@ -99,7 +102,8 @@ cameraSelect.addEventListener('change', () => {
 });
 
 // debounce only repeats of the same code within a short interval
-let lastScan = { code: null, time: 0 };
+const pollInterval = 600; // ms
+const recentScans = new Map();
 let last = null;
 let processing = false;
 const queue = [];
@@ -111,12 +115,6 @@ function processNext(){
     return;
   }
   const decodedText = queue.shift();
-  const now = Date.now();
-  if(lastScan.code === decodedText && (now - lastScan.time) < 200){
-    processNext();
-    return;
-  }
-  lastScan = { code: decodedText, time: now };
   beep();
   fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
     .then(r=>r.json())
@@ -126,6 +124,8 @@ function processNext(){
       addLog(`Scanned ${decodedText}${nameHtml}`);
       if(data.message){
         msg.innerHTML = data.message;
+        msg.classList.add('text-danger');
+        beep(880);
         addLog(data.message);
         last = null;
         if(pendingTimeout){
@@ -133,6 +133,7 @@ function processNext(){
           pendingTimeout = null;
         }
       }else if(data.pending){
+        msg.classList.remove('text-danger');
         msg.textContent = 'First code scanned...';
         last = {type:data.type, code:data.code};
         if(pendingTimeout){
@@ -165,6 +166,17 @@ function processNext(){
 }
 
 function handleScan(decodedText){
+  const now = Date.now();
+  for (const [code, time] of recentScans) {
+    if (now - time > pollInterval) {
+      recentScans.delete(code);
+    }
+  }
+  const lastTime = recentScans.get(decodedText);
+  if(lastTime && (now - lastTime) < pollInterval){
+    return;
+  }
+  recentScans.set(decodedText, now);
   queue.push(decodedText);
   if(!processing){
     processing = true;
@@ -182,15 +194,20 @@ doneBtn.addEventListener('click', ()=>{
   }
 });
 
+let lastTick = 0;
 function tick(){
   if(video.readyState === video.HAVE_ENOUGH_DATA){
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
-    if(code){
-      handleScan(code.data);
+    const now = Date.now();
+    if(now - lastTick > pollInterval){
+      lastTick = now;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if(code){
+        handleScan(code.data);
+      }
     }
   }
   requestAnimationFrame(tick);

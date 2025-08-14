@@ -29,6 +29,11 @@
       {% endfor %}
     </select>
   </div>
+  <div class="mb-3">
+    <label class="form-label">Items</label>
+    <input class="form-control" type="text" name="items" placeholder="rope 20 climbing, nails 200 hardware">
+    <div class="form-text">Comma separated list: name quantity type. Quantity and type optional.</div>
+  </div>
   {% if not edit %}
   <div class="mb-3">
     <label class="form-label">Existing QR Code</label>

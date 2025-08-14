@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History
+from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History, setup_database
 
 
 def setup_module(module):
@@ -29,6 +29,18 @@ def test_add_item():
         assert Path(qr_path(item.code)).exists()
 
 
+def test_add_container_with_items():
+    client = app.test_client()
+    login(client)
+    response = client.post('/add/container', data={'name': 'Crate', 'size': '', 'color': '', 'items': 'rope 20 climbing, nails 200 hardware'}, follow_redirects=True)
+    assert response.status_code == 200
+    with app.app_context():
+        cont = Container.query.filter_by(name='Crate').one()
+        items = {i.name: (i.quantity, i.type) for i in cont.items}
+        assert items['Rope'] == (20, 'Climbing')
+        assert items['Nails'] == (200, 'Hardware')
+
+
 def test_split_item():
     with app.app_context():
         item = Item.query.filter_by(name='Hammer').first()
@@ -38,7 +50,7 @@ def test_split_item():
     client.post(f'/item/{code}/split', data={'quantity': '1'}, follow_redirects=True)
     with app.app_context():
         item = Item.query.filter_by(code=code).first()
-        new_items = Item.query.filter(Item.code != code).all()
+        new_items = Item.query.filter(Item.name == 'Hammer', Item.code != code).all()
         assert item.quantity == 2
         assert len(new_items) == 1
         assert new_items[0].quantity == 1
@@ -389,3 +401,25 @@ def test_scan_multiple_items_to_location():
         assert i2.location_id == loc1.id
         assert i3.location_id == loc2.id
 
+
+def test_migrate_old_database(tmp_path):
+    import sqlite3, shutil
+    old_db = tmp_path / 'old_inventory.db'
+    conn = sqlite3.connect(old_db)
+    cur = conn.cursor()
+    cur.execute('CREATE TABLE item (id INTEGER PRIMARY KEY, code TEXT, name TEXT, type TEXT, quantity INTEGER)')
+    cur.execute("INSERT INTO item (id, code, name, type, quantity) VALUES (1, 'IT-old', 'OldItem', 'Tool', 5)")
+    conn.commit()
+    conn.close()
+    with app.app_context():
+        db.session.remove()
+        db.engine.dispose()
+    shutil.copy(old_db, 'inventory.db')
+    with app.app_context():
+        from app import migrate_sqlite, Location, Container, History, Relation
+        migrate_sqlite('inventory.db', (Location, Container, Item, History, Relation))
+    import sqlite3
+    conn = sqlite3.connect('inventory.db')
+    row = conn.execute("select name, quantity from item where code='IT-old'").fetchone()
+    conn.close()
+    assert row == ('OldItem', 5)
