@@ -6,10 +6,8 @@ from app import app, db, Item, Location, Container, qr_path, generate_qr, User, 
 
 def setup_module(module):
     with app.app_context():
-        for f in ('inventory.db', 'users.db', 'locations.db', 'containers.db', 'items.db'):
-            if Path(f).exists():
-                Path(f).unlink()
-        setup_database()
+        db.drop_all()
+        db.create_all()
         u = User(username='tester')
         u.set_password('test')
         db.session.add(u)
