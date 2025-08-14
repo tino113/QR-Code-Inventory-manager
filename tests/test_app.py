@@ -1,7 +1,7 @@
 from pathlib import Path
 import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History
+from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History, setup_database
 
 
 def setup_module(module):
@@ -29,6 +29,18 @@ def test_add_item():
         assert Path(qr_path(item.code)).exists()
 
 
+def test_add_container_with_items():
+    client = app.test_client()
+    login(client)
+    response = client.post('/add/container', data={'name': 'Crate', 'size': '', 'color': '', 'items': 'rope 20 climbing, nails 200 hardware'}, follow_redirects=True)
+    assert response.status_code == 200
+    with app.app_context():
+        cont = Container.query.filter_by(name='Crate').one()
+        items = {i.name: (i.quantity, i.type) for i in cont.items}
+        assert items['Rope'] == (20, 'Climbing')
+        assert items['Nails'] == (200, 'Hardware')
+
+
 def test_split_item():
     with app.app_context():
         item = Item.query.filter_by(name='Hammer').first()
@@ -38,7 +50,7 @@ def test_split_item():
     client.post(f'/item/{code}/split', data={'quantity': '1'}, follow_redirects=True)
     with app.app_context():
         item = Item.query.filter_by(code=code).first()
-        new_items = Item.query.filter(Item.code != code).all()
+        new_items = Item.query.filter(Item.name == 'Hammer', Item.code != code).all()
         assert item.quantity == 2
         assert len(new_items) == 1
         assert new_items[0].quantity == 1
@@ -174,6 +186,25 @@ def test_location_unique_items():
         assert len(names) == 1
 
 
+def test_inventory_accordion_order():
+    client = app.test_client()
+    login(client)
+    response = client.get('/')
+    html = response.get_data(as_text=True)
+    idx_cont = html.find('data-bs-target="#collapseContainers"')
+    idx_loc = html.find('data-bs-target="#collapseLocations"')
+    idx_items = html.find('data-bs-target="#collapseItems"')
+    assert idx_cont < idx_loc < idx_items
+
+
+def test_user_pref_endpoint():
+    client = app.test_client()
+    login(client)
+    client.post('/prefs/test', json={'value': 'hello'})
+    resp = client.get('/prefs/test')
+    assert resp.json['value'] == 'hello'
+
+
 def test_scan_container_pair_timeout():
     client = app.test_client()
     login(client)
@@ -196,6 +227,35 @@ def test_scan_container_pair_timeout():
         outer = Container.query.filter_by(code='CT-outer').first()
         assert inner.parent_id == outer.id
         assert inner.location_id == outer.location_id
+
+
+def test_scan_multiple_items_to_container_includes_last():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location(name='MultiRoom', code='LC-multi', created_by=u, updated_by=u)
+        cont = Container(name='Bin', code='CT-bin', created_by=u, updated_by=u, location=loc)
+        db.session.add_all([loc, cont])
+        items = []
+        for i in range(3):
+            it = Item(name=f'Widget{i}', type='Tool', quantity=1, code=f'IT-w{i}', created_by=u, updated_by=u)
+            db.session.add(it)
+            items.append(it)
+        db.session.commit()
+        for obj in [loc, cont] + items:
+            if not Path(qr_path(obj.code)).exists():
+                generate_qr(obj.code)
+        cont_code = cont.code
+        item_codes = [it.code for it in items]
+    client.get(f'/scan/{cont_code}')
+    for code in item_codes:
+        client.get(f'/scan/{code}')
+    with app.app_context():
+        cont = Container.query.filter_by(code=cont_code).first()
+        for code in item_codes:
+            it = Item.query.filter_by(code=code).first()
+            assert it.container_id == cont.id
 
 
 def test_scan_multiple_items_to_container():
@@ -360,3 +420,25 @@ def test_scan_multiple_items_to_location():
         assert i2.location_id == loc1.id
         assert i3.location_id == loc2.id
 
+
+def test_migrate_old_database(tmp_path):
+    import sqlite3, shutil
+    old_db = tmp_path / 'old_inventory.db'
+    conn = sqlite3.connect(old_db)
+    cur = conn.cursor()
+    cur.execute('CREATE TABLE item (id INTEGER PRIMARY KEY, code TEXT, name TEXT, type TEXT, quantity INTEGER)')
+    cur.execute("INSERT INTO item (id, code, name, type, quantity) VALUES (1, 'IT-old', 'OldItem', 'Tool', 5)")
+    conn.commit()
+    conn.close()
+    with app.app_context():
+        db.session.remove()
+        db.engine.dispose()
+    shutil.copy(old_db, 'inventory.db')
+    with app.app_context():
+        from app import migrate_sqlite, Location, Container, History, Relation
+        migrate_sqlite('inventory.db', (Location, Container, Item, History, Relation))
+    import sqlite3
+    conn = sqlite3.connect('inventory.db')
+    row = conn.execute("select name, quantity from item where code='IT-old'").fetchone()
+    conn.close()
+    assert row == ('OldItem', 5)

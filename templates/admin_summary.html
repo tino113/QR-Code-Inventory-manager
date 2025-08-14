@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
 {% block content %}
 <h2>Admin Summary</h2>
+<div class="mb-3">
+  <a class="btn btn-outline-primary me-2" href="{{ url_for('admin_download_db') }}">Download DB</a>
+  <a class="btn btn-outline-primary me-2" href="{{ url_for('admin_download_csv') }}">Download CSV & Assets</a>
+  <a class="btn btn-outline-primary" href="{{ url_for('admin_import_csv') }}">Import CSV</a>
+</div>
 <form class="row g-2 mb-2" method="get">
   <div class="col-6 col-md-3"><input class="form-control" type="date" name="start" value="{{ start or '' }}"></div>
   <div class="col-6 col-md-3"><input class="form-control" type="date" name="end" value="{{ end or '' }}"></div>

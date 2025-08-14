@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Import CSV</h2>
+<div class="row mb-3">
+  <div class="col-md">
+    <form method="post" enctype="multipart/form-data" class="mb-3">
+      <input type="hidden" name="kind" value="items">
+      <label class="form-label">Items CSV</label>
+      <div class="mb-2"><a href="{{ url_for('admin_template', kind='items') }}">Download items template</a></div>
+      <input class="form-control mb-2" type="file" name="csv" required>
+      <button class="btn btn-primary">Upload Items</button>
+    </form>
+  </div>
+  <div class="col-md">
+    <form method="post" enctype="multipart/form-data" class="mb-3">
+      <input type="hidden" name="kind" value="containers">
+      <label class="form-label">Containers CSV</label>
+      <div class="mb-2"><a href="{{ url_for('admin_template', kind='containers') }}">Download containers template</a></div>
+      <input class="form-control mb-2" type="file" name="csv" required>
+      <button class="btn btn-primary">Upload Containers</button>
+    </form>
+  </div>
+  <div class="col-md">
+    <form method="post" enctype="multipart/form-data">
+      <input type="hidden" name="kind" value="locations">
+      <label class="form-label">Locations CSV</label>
+      <div class="mb-2"><a href="{{ url_for('admin_template', kind='locations') }}">Download locations template</a></div>
+      <input class="form-control mb-2" type="file" name="csv" required>
+      <button class="btn btn-primary">Upload Locations</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

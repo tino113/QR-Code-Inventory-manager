@@ -2,11 +2,12 @@
 {% block content %}
 <h2>Scanner</h2>
 <div class="mb-3">
-  <label>Pair window (seconds): <span id="window-label">10</span></label>
-  <input type="range" id="window" class="form-range" min="1" max="60" value="10">
+  <label>Pair window (seconds): <span id="window-label">5</span></label>
+  <input type="range" id="window" class="form-range" min="1" max="60" value="5">
 </div>
 <p>Please allow camera access when prompted.</p>
-<button id="start-btn" class="btn btn-primary mb-3">Start Camera</button>
+<button id="start-btn" class="btn btn-primary btn-lg w-100 mb-3">Start Camera</button>
+<button id="done-btn" class="btn btn-secondary btn-lg w-100 mb-3" style="display:none;">Done</button>
 <select id="camera-select" class="form-select mb-3" style="display:none;"></select>
 <video id="video" style="width:100%;max-width:400px;" autoplay muted playsinline></video>
 <canvas id="canvas" style="display:none;"></canvas>
@@ -20,6 +21,7 @@ windowSlider.oninput = () => windowLabel.textContent = windowSlider.value;
 const logList = document.getElementById('scan-log');
 const cameraSelect = document.getElementById('camera-select');
 const startBtn = document.getElementById('start-btn');
+const doneBtn = document.getElementById('done-btn');
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -33,13 +35,16 @@ function addLog(text) {
   logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">${time} - ${text}</li>`);
 }
 
-function beep(){
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const osc = ctx.createOscillator();
-  osc.frequency.value = 440;
-  osc.connect(ctx.destination);
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function beep(freq = 440){
+  const osc = audioCtx.createOscillator();
+  osc.frequency.value = freq;
+  osc.connect(audioCtx.destination);
   osc.start();
-  setTimeout(()=>osc.stop(),150);
+  setTimeout(()=>{
+    osc.stop();
+    osc.disconnect();
+  },150);
 }
 
 let stream = null;
@@ -60,6 +65,7 @@ async function startStream(deviceId){
 
 async function initCameras(){
   startBtn.style.display = 'none';
+  doneBtn.style.display = 'block';
   const msg = document.getElementById('scan-message');
   if(!window.isSecureContext && location.hostname !== 'localhost'){
     msg.textContent = 'Camera access requires HTTPS or localhost.';
@@ -95,32 +101,45 @@ cameraSelect.addEventListener('change', () => {
   startStream(cameraSelect.value);
 });
 
-// debounce only repeats of the same code within one second
-let lastScan = { code: null, time: 0 };
+// debounce only repeats of the same code within a short interval
+const pollInterval = 600; // ms
+const recentScans = new Map();
 let last = null;
+let processing = false;
+const queue = [];
+let pendingTimeout = null;
 
-function handleScan(decodedText){
-  const now = Date.now();
-  if(lastScan.code === decodedText && (now - lastScan.time) < 1000){
-    return; // ignore rapid repeat of the same code
+function processNext(){
+  if(queue.length === 0){
+    processing = false;
+    return;
   }
-  lastScan = { code: decodedText, time: now };
-
+  const decodedText = queue.shift();
   beep();
-
   fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
-    .then(r=>r.json()).then(data=>{
+    .then(r=>r.json())
+    .then(data=>{
       const msg = document.getElementById('scan-message');
       const nameHtml = data.name ? ` - <b>${data.name}</b>` : '';
       addLog(`Scanned ${decodedText}${nameHtml}`);
       if(data.message){
         msg.innerHTML = data.message;
+        msg.classList.add('text-danger');
+        beep(880);
         addLog(data.message);
         last = null;
+        if(pendingTimeout){
+          clearTimeout(pendingTimeout);
+          pendingTimeout = null;
+        }
       }else if(data.pending){
+        msg.classList.remove('text-danger');
         msg.textContent = 'First code scanned...';
         last = {type:data.type, code:data.code};
-        setTimeout(()=>{
+        if(pendingTimeout){
+          clearTimeout(pendingTimeout);
+        }
+        pendingTimeout = setTimeout(()=>{
           if(last && last.code === data.code){
             window.location = `/${data.type}/${data.code}`;
           }
@@ -139,19 +158,56 @@ function handleScan(decodedText){
             + `<button class=\"btn btn-sm btn-primary\" onclick=\"location='/add/location?code=${decodedText}'\">Location</button>`
             + `</div>`;
         }
-        }
+      }
+    })
+    .finally(()=>{
+      processNext();
     });
 }
 
+function handleScan(decodedText){
+  const now = Date.now();
+  for (const [code, time] of recentScans) {
+    if (now - time > pollInterval) {
+      recentScans.delete(code);
+    }
+  }
+  const lastTime = recentScans.get(decodedText);
+  if(lastTime && (now - lastTime) < pollInterval){
+    return;
+  }
+  recentScans.set(decodedText, now);
+  queue.push(decodedText);
+  if(!processing){
+    processing = true;
+    processNext();
+  }
+}
+
+doneBtn.addEventListener('click', ()=>{
+  if(pendingTimeout){
+    clearTimeout(pendingTimeout);
+    pendingTimeout = null;
+  }
+  if(last){
+    window.location = `/${last.type}/${last.code}`;
+  }
+});
+
+let lastTick = 0;
 function tick(){
   if(video.readyState === video.HAVE_ENOUGH_DATA){
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
-    if(code){
-      handleScan(code.data);
+    const now = Date.now();
+    if(now - lastTick > pollInterval){
+      lastTick = now;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if(code){
+        handleScan(code.data);
+      }
     }
   }
   requestAnimationFrame(tick);

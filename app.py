@@ -3,23 +3,30 @@ import uuid
 import datetime as dt
 
 from flask import (Flask, render_template, request, redirect, url_for, session,
-                   flash, jsonify, abort)
+                   flash, jsonify, abort, send_file, Response)
 from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import or_, and_
+from sqlalchemy.orm import foreign
 import qrcode
 import glob
 import json
 import zipfile
 from PIL import Image
 import math
+import shutil
 from difflib import SequenceMatcher
+import io
+import csv
 
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///inventory.db'
+app.config['SQLALCHEMY_BINDS'] = {
+    'users': 'sqlite:///users.db'
+}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -36,6 +43,7 @@ class TimestampMixin:
 
 
 class User(db.Model):
+    __bind_key__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String, unique=True, nullable=False)
     password_hash = db.Column(db.String, nullable=False)
@@ -52,6 +60,15 @@ class User(db.Model):
         return check_password_hash(self.password_hash, password)
 
 
+class Preference(db.Model):
+    __bind_key__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    key = db.Column(db.String, nullable=False)
+    value = db.Column(db.String, nullable=False)
+    __table_args__ = (db.UniqueConstraint('user_id', 'key'),)
+
+
 class Location(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String, unique=True, nullable=False)
@@ -60,10 +77,14 @@ class Location(db.Model, TimestampMixin):
     parent = db.relationship('Location', remote_side=[id], backref='children')
     image = db.Column(db.String)
     custom_data = db.Column(db.Text)
-    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_by = db.relationship('User', foreign_keys=[created_by_id])
-    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    created_by_id = db.Column(db.Integer)
+    updated_by_id = db.Column(db.Integer)
+    created_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Location.created_by_id)',
+                                 foreign_keys=[created_by_id])
+    updated_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Location.updated_by_id)',
+                                 foreign_keys=[updated_by_id])
 
     items = db.relationship('Item', backref='location', lazy=True)
     containers = db.relationship('Container', backref='location', lazy=True)
@@ -109,10 +130,14 @@ class Container(db.Model, TimestampMixin):
     custom_data = db.Column(db.Text)
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
     parent_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_by = db.relationship('User', foreign_keys=[created_by_id])
-    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    created_by_id = db.Column(db.Integer)
+    updated_by_id = db.Column(db.Integer)
+    created_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Container.created_by_id)',
+                                 foreign_keys=[created_by_id])
+    updated_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Container.updated_by_id)',
+                                 foreign_keys=[updated_by_id])
     parent = db.relationship('Container', remote_side=[id], backref='children')
     items = db.relationship('Item', backref='container', lazy=True)
     histories = db.relationship('History', backref='container', lazy=True)
@@ -157,10 +182,14 @@ class Item(db.Model, TimestampMixin):
     custom_data = db.Column(db.Text)
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    updated_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
-    created_by = db.relationship('User', foreign_keys=[created_by_id])
-    updated_by = db.relationship('User', foreign_keys=[updated_by_id])
+    created_by_id = db.Column(db.Integer)
+    updated_by_id = db.Column(db.Integer)
+    created_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Item.created_by_id)',
+                                 foreign_keys=[created_by_id])
+    updated_by = db.relationship('User',
+                                 primaryjoin='User.id==foreign(Item.updated_by_id)',
+                                 foreign_keys=[updated_by_id])
     histories = db.relationship('History', backref='item', lazy=True)
 
     def hierarchy(self):
@@ -193,10 +222,13 @@ class History(db.Model):
     item_id = db.Column(db.Integer, db.ForeignKey('item.id'))
     container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    user_id = db.Column(db.Integer)
     action = db.Column(db.String)
     description = db.Column(db.Text)
-    user = db.relationship('User', backref='histories')
+    user = db.relationship('User',
+                           primaryjoin='User.id==foreign(History.user_id)',
+                           foreign_keys=[user_id],
+                           backref='histories')
 
 
 class Relation(db.Model):
@@ -235,6 +267,25 @@ def require_login():
     if request.endpoint not in allowed and not current_user():
         return redirect(url_for('login'))
 
+
+@app.route('/prefs/<key>', methods=['GET', 'POST'])
+def user_pref(key):
+    user = current_user()
+    if not user:
+        abort(403)
+    pref = Preference.query.filter_by(user_id=user.id, key=key).first()
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        val = data.get('value', '')
+        if pref:
+            pref.value = val
+        else:
+            pref = Preference(user_id=user.id, key=key, value=val)
+            db.session.add(pref)
+        db.session.commit()
+        return jsonify(success=True)
+    return jsonify(value=pref.value if pref else None)
+
 def ensure_admin():
     if not User.query.filter_by(is_admin=True).first():
         admin = User(username='admin', must_change=True,
@@ -244,19 +295,49 @@ def ensure_admin():
         db.session.add(admin)
         db.session.commit()
 
+
+def migrate_sqlite(path, models, bind=None):
+    db.session.remove()
+    engine = db.get_engine(app, bind=bind) if bind else db.engine
+    if not os.path.exists(path):
+        db.create_all(bind_key=bind)
+        return
+    import sqlite3
+    conn = sqlite3.connect(path)
+    cur = conn.cursor()
+    for model in models:
+        table = model.__tablename__
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+        if not cur.fetchone():
+            model.__table__.create(bind=engine, checkfirst=True)
+            continue
+        cur.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cur.fetchall()}
+        for col in model.__table__.columns:
+            if col.name not in existing:
+                coltype = col.type.compile(engine.dialect)
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {col.name} {coltype}")
+    conn.commit()
+    conn.close()
+    db.create_all(bind_key=bind)
+
 def setup_database():
-    try:
-        db.create_all()
-        # issue simple selects to ensure all tables match the models;
-        # missing columns will raise an OperationalError which triggers
-        # a full rebuild of the schema
-        for model in (User, Location, Container, Item, History, Relation):
+    db.create_all()
+    inventory_models = (Location, Container, Item, History, Relation)
+    user_models = (User, Preference)
+    for model in inventory_models:
+        try:
             db.session.query(model).first()
-        ensure_admin()
-    except Exception:
-        db.drop_all()
-        db.create_all()
-        ensure_admin()
+        except Exception:
+            migrate_sqlite('inventory.db', inventory_models)
+            break
+    for model in user_models:
+        try:
+            db.session.query(model).first()
+        except Exception:
+            migrate_sqlite('users.db', user_models, bind='users')
+            break
+    ensure_admin()
 
 
 with app.app_context():
@@ -357,6 +438,34 @@ def maybe_title(value: str) -> str:
     if value and value[0].isalpha():
         return value.title()
     return value
+
+
+def create_items_from_spec(container, spec: str):
+    for part in spec.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        tokens = part.split()
+        if not tokens:
+            continue
+        name = maybe_title(tokens[0])
+        quantity = 1
+        type_ = 'Misc'
+        if len(tokens) > 1:
+            if tokens[1].isdigit():
+                quantity = int(tokens[1])
+                if len(tokens) > 2:
+                    type_ = maybe_title(' '.join(tokens[2:]))
+            else:
+                type_ = maybe_title(' '.join(tokens[1:]))
+        code = generate_code('IT')
+        item = Item(name=name, type=type_, quantity=quantity, code=code,
+                    container=container, location=container.location,
+                    created_by=current_user(), updated_by=current_user())
+        db.session.add(item)
+        db.session.flush()
+        generate_qr(code)
+        log_action('created item', item=item)
 
 
 def reassign_code(code):
@@ -807,6 +916,139 @@ def admin_ssl():
     return render_template('admin_ssl.html')
 
 
+@app.route('/admin/upload', methods=['GET', 'POST'])
+def admin_upload_db():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    if request.method == 'POST':
+        file = request.files.get('dbfile')
+        if file and file.filename:
+            filename = secure_filename(file.filename)
+            temp = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(temp)
+            shutil.move(temp, 'inventory.db')
+            migrate_sqlite('inventory.db', (Location, Container, Item, History, Relation))
+            flash('Database uploaded and migrated', 'info')
+            return redirect(url_for('index'))
+    return render_template('upload_db.html')
+
+
+@app.route('/admin/download/db')
+def admin_download_db():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    return send_file('inventory.db', as_attachment=True)
+
+
+@app.route('/admin/download/csv')
+def admin_download_csv():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, 'w') as z:
+        s = io.StringIO(); w = csv.writer(s)
+        w.writerow(['code', 'name', 'quantity', 'type'])
+        for i in Item.query.all():
+            w.writerow([i.code, i.name, i.quantity, i.type or ''])
+        z.writestr('items.csv', s.getvalue())
+        s = io.StringIO(); w = csv.writer(s)
+        w.writerow(['code', 'name', 'location_code'])
+        for c in Container.query.all():
+            w.writerow([c.code, c.name or '', c.location.code if c.location else ''])
+        z.writestr('containers.csv', s.getvalue())
+        s = io.StringIO(); w = csv.writer(s)
+        w.writerow(['code', 'name', 'parent_code'])
+        for l in Location.query.all():
+            w.writerow([l.code, l.name, l.parent.code if l.parent else ''])
+        z.writestr('locations.csv', s.getvalue())
+        for folder in ('static/uploads', 'static/qr'):
+            if os.path.exists(folder):
+                for root, _, files in os.walk(folder):
+                    for f in files:
+                        arc = os.path.relpath(os.path.join(root, f), 'static')
+                        z.write(os.path.join(root, f), arcname=arc)
+    mem.seek(0)
+    return send_file(mem, mimetype='application/zip', as_attachment=True,
+                     download_name='inventory_export.zip')
+
+
+@app.route('/admin/template/<kind>')
+def admin_template(kind):
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    templates = {
+        'items': 'name,quantity,type\n',
+        'containers': 'name,location_code\n',
+        'locations': 'name,parent_code\n'
+    }
+    if kind not in templates:
+        abort(404)
+    return Response(templates[kind], mimetype='text/csv',
+                    headers={'Content-Disposition':
+                             f'attachment; filename={kind}_template.csv'})
+
+
+@app.route('/admin/import', methods=['GET', 'POST'])
+def admin_import_csv():
+    user = current_user()
+    if not user or not user.is_admin:
+        abort(403)
+    if request.method == 'POST':
+        kind = request.form.get('kind')
+        file = request.files.get('csv')
+        if kind and file and file.filename:
+            stream = io.StringIO(file.stream.read().decode('utf-8'))
+            reader = csv.DictReader(stream)
+            if kind == 'items':
+                for row in reader:
+                    name = row.get('name')
+                    if not name:
+                        continue
+                    quantity = int(row.get('quantity') or 1)
+                    type_ = row.get('type') or None
+                    code = generate_code('IT')
+                    item = Item(name=name, quantity=quantity, type=type_, code=code,
+                                created_by=user, updated_by=user)
+                    db.session.add(item)
+                    generate_qr(code)
+                db.session.commit()
+                flash('Items imported', 'info')
+            elif kind == 'containers':
+                for row in reader:
+                    name = row.get('name')
+                    if not name:
+                        continue
+                    loc_code = row.get('location_code')
+                    location = Location.query.filter_by(code=loc_code).first() if loc_code else None
+                    code = generate_code('CT')
+                    cont = Container(name=name, code=code, location=location,
+                                     created_by=user, updated_by=user)
+                    db.session.add(cont)
+                    generate_qr(code)
+                db.session.commit()
+                flash('Containers imported', 'info')
+            elif kind == 'locations':
+                for row in reader:
+                    name = row.get('name')
+                    if not name:
+                        continue
+                    parent_code = row.get('parent_code')
+                    parent = Location.query.filter_by(code=parent_code).first() if parent_code else None
+                    code = generate_code('LC')
+                    loc = Location(name=name, code=code, parent=parent,
+                                   created_by=user, updated_by=user)
+                    db.session.add(loc)
+                    generate_qr(code)
+                db.session.commit()
+                flash('Locations imported', 'info')
+        return redirect(url_for('admin_import_csv'))
+    return render_template('import_csv.html')
+
+
 @app.route('/item/<code>')
 def item_detail(code):
     item = Item.query.filter_by(code=code).first_or_404()
@@ -941,6 +1183,10 @@ def add_container():
                               created_by=current_user(), updated_by=current_user())
         db.session.add(container)
         db.session.commit()
+        items_spec = request.form.get('items', '').strip()
+        if items_spec:
+            create_items_from_spec(container, items_spec)
+            db.session.commit()
         generate_qr(code)
         log_action('created container', container=container)
         return redirect(url_for('container_detail', code=code))
@@ -1020,6 +1266,10 @@ def edit_container(code):
         container.custom_data = parse_custom_data(request.form.get('custom_data'))
         container.updated_by = current_user()
         db.session.commit()
+        items_spec = request.form.get('items', '').strip()
+        if items_spec:
+            create_items_from_spec(container, items_spec)
+            db.session.commit()
         log_action('edited container', container=container)
         return redirect(url_for('container_detail', code=code))
     sizes = [s[0] for s in db.session.query(Container.size).filter(Container.size != None).distinct()]
@@ -1229,7 +1479,7 @@ def scan(code):
         return redirect(url_for('index'))
 
     now = dt.datetime.utcnow()
-    window = float(request.args.get('window', 10))
+    window = float(request.args.get('window', 5))
     message = None
     handled = False
 
