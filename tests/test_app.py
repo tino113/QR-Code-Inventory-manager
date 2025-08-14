@@ -186,6 +186,25 @@ def test_location_unique_items():
         assert len(names) == 1
 
 
+def test_inventory_accordion_order():
+    client = app.test_client()
+    login(client)
+    response = client.get('/')
+    html = response.get_data(as_text=True)
+    idx_cont = html.find('data-bs-target="#collapseContainers"')
+    idx_loc = html.find('data-bs-target="#collapseLocations"')
+    idx_items = html.find('data-bs-target="#collapseItems"')
+    assert idx_cont < idx_loc < idx_items
+
+
+def test_user_pref_endpoint():
+    client = app.test_client()
+    login(client)
+    client.post('/prefs/test', json={'value': 'hello'})
+    resp = client.get('/prefs/test')
+    assert resp.json['value'] == 'hello'
+
+
 def test_scan_container_pair_timeout():
     client = app.test_client()
     login(client)

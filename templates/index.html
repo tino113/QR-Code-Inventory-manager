@@ -28,22 +28,6 @@
 </form>
 <div class="accordion" id="inv-acc">
   <div class="accordion-item">
-    <h2 class="accordion-header" id="headingItems">
-      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
-    </h2>
-    <div id="collapseItems" class="accordion-collapse collapse show">
-      <div class="accordion-body p-0">
-        <ul class="list-group list-group-flush">
-        {% for item in items %}
-          <li class="list-group-item">
-            <span title="item">📄</span> <a href="/item/{{ item.code }}">{{ item.name }} ({{ item.quantity }}){% if item.hierarchy() %} / {{ item.hierarchy() }}{% endif %}</a>
-          </li>
-        {% endfor %}
-        </ul>
-      </div>
-    </div>
-  </div>
-  <div class="accordion-item">
     <h2 class="accordion-header" id="headingContainers">
       <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseContainers">Containers</button>
     </h2>
@@ -69,6 +53,22 @@
         {% for l in locations %}
           <li class="list-group-item d-flex justify-content-between align-items-center">
             <div><span title="location">📍</span> <a href="/location/{{ l.code }}">{{ l.full_path() }}</a></div>
+          </li>
+        {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="headingItems">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseItems">Items</button>
+    </h2>
+    <div id="collapseItems" class="accordion-collapse collapse show">
+      <div class="accordion-body p-0">
+        <ul class="list-group list-group-flush">
+        {% for item in items %}
+          <li class="list-group-item">
+            <span title="item">📄</span> <a href="/item/{{ item.code }}">{{ item.name }} ({{ item.quantity }}){% if item.hierarchy() %} / {{ item.hierarchy() }}{% endif %}</a>
           </li>
         {% endfor %}
         </ul>
@@ -127,6 +127,28 @@ searchInput.addEventListener('input',()=>{
         });
       });
   },200);
+});
+
+const acc=document.getElementById('inv-acc');
+function saveState(){
+  const st={};
+  acc.querySelectorAll('.accordion-collapse').forEach(el=>{st[el.id]=el.classList.contains('show');});
+  fetch('/prefs/inv_acc', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({value:JSON.stringify(st)})});
+}
+acc.querySelectorAll('.accordion-collapse').forEach(el=>{
+  el.addEventListener('shown.bs.collapse', saveState);
+  el.addEventListener('hidden.bs.collapse', saveState);
+});
+fetch('/prefs/inv_acc').then(r=>r.json()).then(data=>{
+  if(data.value){
+    const st=JSON.parse(data.value);
+    for(const id in st){
+      const el=document.getElementById(id);
+      if(el && !st[id]){
+        new bootstrap.Collapse(el,{toggle:false}).hide();
+      }
+    }
+  }
 });
 </script>
 {% endblock %}
