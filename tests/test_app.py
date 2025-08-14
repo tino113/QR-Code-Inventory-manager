@@ -1,5 +1,5 @@
 from pathlib import Path
-import os, sys
+import os, sys, io, zipfile
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app import app, db, Item, Location, Container, qr_path, generate_qr, User, History, setup_database
 
@@ -8,7 +8,7 @@ def setup_module(module):
     with app.app_context():
         db.drop_all()
         db.create_all()
-        u = User(username='tester')
+        u = User(username='tester', is_admin=True)
         u.set_password('test')
         db.session.add(u)
         db.session.commit()
@@ -419,6 +419,63 @@ def test_scan_multiple_items_to_location():
         assert i1.location_id == loc1.id
         assert i2.location_id == loc1.id
         assert i3.location_id == loc2.id
+
+
+def test_admin_download_db():
+    client = app.test_client()
+    login(client)
+    resp = client.get('/admin/download/db')
+    assert resp.status_code == 200
+    assert 'attachment' in resp.headers.get('Content-Disposition', '')
+
+
+def test_admin_template_headers():
+    client = app.test_client()
+    login(client)
+    templates = {
+        'items': b'code,name,quantity,type,image,missing,custom_data,container_code,location_code',
+        'containers': b'code,name,size,color,image,missing,custom_data,location_code,parent_code',
+        'locations': b'code,name,image,custom_data,parent_code'
+    }
+    for kind, header in templates.items():
+        resp = client.get(f'/admin/template/{kind}')
+        assert resp.status_code == 200
+        assert resp.data.splitlines()[0] == header
+
+
+def test_admin_import_and_export_all_fields():
+    client = app.test_client()
+    login(client)
+    loc_csv = ("code,name,image,custom_data,parent_code\n"
+               "LC-import-root,Root,,{\"a\":1},\n"
+               "LC-import-child,Child,,{\"b\":2},LC-import-root\n").encode('utf-8')
+    client.post('/admin/import', data={'kind': 'locations', 'csv': (io.BytesIO(loc_csv), 'loc.csv')},
+                content_type='multipart/form-data', follow_redirects=True)
+    cont_csv = ("code,name,size,color,image,missing,custom_data,location_code,parent_code\n"
+                "CT-import-box,Imported Box,L,Blue,,False,{\"info\":1},LC-import-child,\n").encode('utf-8')
+    client.post('/admin/import', data={'kind': 'containers', 'csv': (io.BytesIO(cont_csv), 'cont.csv')},
+                content_type='multipart/form-data', follow_redirects=True)
+    item_csv = ("code,name,quantity,type,image,missing,custom_data,container_code,location_code\n"
+                "IT-import-item,Imported Item,2,Tool,,True,{\"key\":\"value\"},CT-import-box,\n").encode('utf-8')
+    client.post('/admin/import', data={'kind': 'items', 'csv': (io.BytesIO(item_csv), 'items.csv')},
+                content_type='multipart/form-data', follow_redirects=True)
+    with app.app_context():
+        loc_child = Location.query.filter_by(code='LC-import-child').first()
+        cont = Container.query.filter_by(code='CT-import-box').first()
+        item = Item.query.filter_by(code='IT-import-item').first()
+        assert loc_child is not None and loc_child.parent.code == 'LC-import-root'
+        assert cont is not None and cont.location_id == loc_child.id and cont.size == 'L' and cont.color == 'Blue'
+        assert item is not None and item.container_id == cont.id and item.quantity == 2 and item.missing is True
+    resp = client.get('/admin/download/csv')
+    assert resp.status_code == 200
+    z = zipfile.ZipFile(io.BytesIO(resp.data))
+    items_csv = z.read('items.csv').decode('utf-8').splitlines()
+    assert items_csv[0] == 'code,name,quantity,type,image,missing,custom_data,container_code,location_code'
+    assert any(row.startswith('IT-import-item,Imported Item,2,Tool,') for row in items_csv[1:])
+    containers_csv = z.read('containers.csv').decode('utf-8').splitlines()
+    assert containers_csv[0] == 'code,name,size,color,image,missing,custom_data,location_code,parent_code'
+    locations_csv = z.read('locations.csv').decode('utf-8').splitlines()
+    assert locations_csv[0] == 'code,name,image,custom_data,parent_code'
 
 
 def test_migrate_old_database(tmp_path):
