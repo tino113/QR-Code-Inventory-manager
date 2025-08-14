@@ -939,7 +939,8 @@ def admin_download_db():
     user = current_user()
     if not user or not user.is_admin:
         abort(403)
-    return send_file('inventory.db', as_attachment=True)
+    db_path = db.engine.url.database
+    return send_file(db_path, as_attachment=True)
 
 
 @app.route('/admin/download/csv')
@@ -950,19 +951,45 @@ def admin_download_csv():
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, 'w') as z:
         s = io.StringIO(); w = csv.writer(s)
-        w.writerow(['code', 'name', 'quantity', 'type'])
+        w.writerow(['code', 'name', 'quantity', 'type', 'image', 'missing', 'custom_data', 'container_code', 'location_code'])
         for i in Item.query.all():
-            w.writerow([i.code, i.name, i.quantity, i.type or ''])
+            w.writerow([
+                i.code,
+                i.name,
+                i.quantity,
+                i.type or '',
+                i.image or '',
+                'true' if i.missing else 'false',
+                i.custom_data or '',
+                i.container.code if i.container else '',
+                i.location.code if i.location else ''
+            ])
         z.writestr('items.csv', s.getvalue())
         s = io.StringIO(); w = csv.writer(s)
-        w.writerow(['code', 'name', 'location_code'])
+        w.writerow(['code', 'name', 'size', 'color', 'image', 'missing', 'custom_data', 'location_code', 'parent_code'])
         for c in Container.query.all():
-            w.writerow([c.code, c.name or '', c.location.code if c.location else ''])
+            w.writerow([
+                c.code,
+                c.name or '',
+                c.size or '',
+                c.color or '',
+                c.image or '',
+                'true' if c.missing else 'false',
+                c.custom_data or '',
+                c.location.code if c.location else '',
+                c.parent.code if c.parent else ''
+            ])
         z.writestr('containers.csv', s.getvalue())
         s = io.StringIO(); w = csv.writer(s)
-        w.writerow(['code', 'name', 'parent_code'])
+        w.writerow(['code', 'name', 'image', 'custom_data', 'parent_code'])
         for l in Location.query.all():
-            w.writerow([l.code, l.name, l.parent.code if l.parent else ''])
+            w.writerow([
+                l.code,
+                l.name,
+                l.image or '',
+                l.custom_data or '',
+                l.parent.code if l.parent else ''
+            ])
         z.writestr('locations.csv', s.getvalue())
         for folder in ('static/uploads', 'static/qr'):
             if os.path.exists(folder):
@@ -981,9 +1008,9 @@ def admin_template(kind):
     if not user or not user.is_admin:
         abort(403)
     templates = {
-        'items': 'name,quantity,type\n',
-        'containers': 'name,location_code\n',
-        'locations': 'name,parent_code\n'
+        'items': 'code,name,quantity,type,image,missing,custom_data,container_code,location_code\n',
+        'containers': 'code,name,size,color,image,missing,custom_data,location_code,parent_code\n',
+        'locations': 'code,name,image,custom_data,parent_code\n'
     }
     if kind not in templates:
         abort(404)
@@ -1003,6 +1030,8 @@ def admin_import_csv():
         if kind and file and file.filename:
             stream = io.StringIO(file.stream.read().decode('utf-8'))
             reader = csv.DictReader(stream)
+            def parse_bool(v):
+                return str(v).strip().lower() in ('1', 'true', 'yes', 'y') if v else False
             if kind == 'items':
                 for row in reader:
                     name = row.get('name')
@@ -1010,8 +1039,17 @@ def admin_import_csv():
                         continue
                     quantity = int(row.get('quantity') or 1)
                     type_ = row.get('type') or None
-                    code = generate_code('IT')
-                    item = Item(name=name, quantity=quantity, type=type_, code=code,
+                    image = row.get('image') or None
+                    missing = parse_bool(row.get('missing'))
+                    custom_data = row.get('custom_data') or None
+                    loc_code = row.get('location_code')
+                    container_code = row.get('container_code')
+                    location = Location.query.filter_by(code=loc_code).first() if loc_code else None
+                    container = Container.query.filter_by(code=container_code).first() if container_code else None
+                    code = row.get('code') or generate_code('IT')
+                    item = Item(name=name, quantity=quantity, type=type_, image=image,
+                                missing=missing, custom_data=custom_data, code=code,
+                                location=location, container=container,
                                 created_by=user, updated_by=user)
                     db.session.add(item)
                     generate_qr(code)
@@ -1022,10 +1060,19 @@ def admin_import_csv():
                     name = row.get('name')
                     if not name:
                         continue
+                    size = row.get('size') or None
+                    color = row.get('color') or None
+                    image = row.get('image') or None
+                    missing = parse_bool(row.get('missing'))
+                    custom_data = row.get('custom_data') or None
                     loc_code = row.get('location_code')
                     location = Location.query.filter_by(code=loc_code).first() if loc_code else None
-                    code = generate_code('CT')
-                    cont = Container(name=name, code=code, location=location,
+                    parent_code = row.get('parent_code')
+                    parent = Container.query.filter_by(code=parent_code).first() if parent_code else None
+                    code = row.get('code') or generate_code('CT')
+                    cont = Container(name=name, size=size, color=color, image=image,
+                                     missing=missing, custom_data=custom_data,
+                                     code=code, location=location, parent=parent,
                                      created_by=user, updated_by=user)
                     db.session.add(cont)
                     generate_qr(code)
@@ -1036,10 +1083,13 @@ def admin_import_csv():
                     name = row.get('name')
                     if not name:
                         continue
+                    image = row.get('image') or None
+                    custom_data = row.get('custom_data') or None
                     parent_code = row.get('parent_code')
                     parent = Location.query.filter_by(code=parent_code).first() if parent_code else None
-                    code = generate_code('LC')
-                    loc = Location(name=name, code=code, parent=parent,
+                    code = row.get('code') or generate_code('LC')
+                    loc = Location(name=name, image=image, custom_data=custom_data,
+                                   code=code, parent=parent,
                                    created_by=user, updated_by=user)
                     db.session.add(loc)
                     generate_qr(code)
