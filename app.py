@@ -1066,9 +1066,9 @@ def admin_template(kind):
     if not user or not user.is_admin:
         abort(403)
     templates = {
-        'items': 'name,quantity,type,location_code,container_code,custom_data\n',
-        'containers': 'name,location_code,parent_code,children_codes,custom_data\n',
-        'locations': 'name,parent_code,children_codes,custom_data\n'
+        'items': 'name,quantity,type\n',
+        'containers': 'name,location_code\n',
+        'locations': 'name,parent_code\n'
     }
     if kind not in templates:
         abort(404)
@@ -1095,15 +1095,8 @@ def admin_import_csv():
                         continue
                     quantity = int(row.get('quantity') or 1)
                     type_ = row.get('type') or None
-                    loc_code = row.get('location_code')
-                    cont_code = row.get('container_code')
-                    location = Location.query.filter_by(code=loc_code).first() if loc_code else None
-                    container = Container.query.filter_by(code=cont_code).first() if cont_code else None
-                    custom_data = row.get('custom_data') or None
                     code = generate_code('IT')
                     item = Item(name=name, quantity=quantity, type=type_, code=code,
-                                location=location, container=container,
-                                custom_data=custom_data,
                                 created_by=user, updated_by=user)
                     db.session.add(item)
                     generate_qr(code)
@@ -1116,12 +1109,8 @@ def admin_import_csv():
                         continue
                     loc_code = row.get('location_code')
                     location = Location.query.filter_by(code=loc_code).first() if loc_code else None
-                    parent_code = row.get('parent_code')
-                    parent = Container.query.filter_by(code=parent_code).first() if parent_code else None
-                    custom_data = row.get('custom_data') or None
                     code = generate_code('CT')
                     cont = Container(name=name, code=code, location=location,
-                                     parent=parent, custom_data=custom_data,
                                      created_by=user, updated_by=user)
                     db.session.add(cont)
                     generate_qr(code)
@@ -1134,10 +1123,8 @@ def admin_import_csv():
                         continue
                     parent_code = row.get('parent_code')
                     parent = Location.query.filter_by(code=parent_code).first() if parent_code else None
-                    custom_data = row.get('custom_data') or None
                     code = generate_code('LC')
                     loc = Location(name=name, code=code, parent=parent,
-                                   custom_data=custom_data,
                                    created_by=user, updated_by=user)
                     db.session.add(loc)
                     generate_qr(code)
