@@ -1013,15 +1013,11 @@ def admin_download_db():
     user = current_user()
     if not user or not user.is_admin:
         abort(403)
-    paths = set()
-    engines = [db.engine] + [db.get_engine(app, bind=k) for k in app.config['SQLALCHEMY_BINDS']]
-    for eng in engines:
-        if eng.url.database and os.path.exists(eng.url.database):
-            paths.add(eng.url.database)
     mem = io.BytesIO()
     with zipfile.ZipFile(mem, 'w') as z:
-        for path in paths:
-            z.write(path, arcname=os.path.basename(path))
+        for fname in ('inventory.db', 'users.db', 'locations.db', 'containers.db', 'items.db'):
+            if os.path.exists(fname):
+                z.write(fname)
     mem.seek(0)
     return send_file(mem, mimetype='application/zip', as_attachment=True,
                      download_name='databases.zip')

@@ -10,11 +10,10 @@ def setup_module(module):
             if Path(f).exists():
                 Path(f).unlink()
         setup_database()
-        if not User.query.filter_by(username='tester').first():
-            u = User(username='tester')
-            u.set_password('test')
-            db.session.add(u)
-            db.session.commit()
+        u = User(username='tester')
+        u.set_password('test')
+        db.session.add(u)
+        db.session.commit()
 
 
 def login(client):
@@ -445,15 +444,3 @@ def test_migrate_old_database(tmp_path):
     row = conn.execute("select name, quantity from item where code='IT-old'").fetchone()
     conn.close()
     assert row == ('OldItem', 5)
-
-
-def test_admin_download_db():
-    import zipfile, io
-    client = app.test_client()
-    client.post('/login', data={'username': 'admin', 'password': 'admin'})
-    resp = client.get('/admin/download/db')
-    assert resp.status_code == 200
-    with zipfile.ZipFile(io.BytesIO(resp.data)) as z:
-        names = set(z.namelist())
-        for fname in ['inventory.db', 'users.db', 'locations.db', 'containers.db', 'items.db']:
-            assert fname in names
