@@ -6,9 +6,14 @@ from app import app, db, Item, Location, Container, qr_path, generate_qr, User, 
 
 def setup_module(module):
     with app.app_context():
+        db.session.remove()
+        for bind in (None, 'users', 'locations', 'containers', 'items'):
+            engine = db.get_engine(app, bind=bind) if bind else db.engine
+            engine.dispose()
         for f in ('inventory.db', 'users.db', 'locations.db', 'containers.db', 'items.db'):
-            if Path(f).exists():
-                Path(f).unlink()
+            for p in [Path(f), Path('instance') / f]:
+                if p.exists():
+                    p.unlink()
         setup_database()
         if not User.query.filter_by(username='tester').first():
             u = User(username='tester')
@@ -457,3 +462,14 @@ def test_admin_download_db():
         names = set(z.namelist())
         for fname in ['inventory.db', 'users.db', 'locations.db', 'containers.db', 'items.db']:
             assert fname in names
+
+
+def test_admin_template_headers():
+    client = app.test_client()
+    client.post('/login', data={'username': 'admin', 'password': 'admin'})
+    resp = client.get('/admin/template/items')
+    assert resp.data.decode() == 'name,quantity,type,location_code,container_code,custom_data\n'
+    resp = client.get('/admin/template/containers')
+    assert resp.data.decode() == 'name,location_code,parent_code,children_codes,custom_data\n'
+    resp = client.get('/admin/template/locations')
+    assert resp.data.decode() == 'name,parent_code,children_codes,custom_data\n'
