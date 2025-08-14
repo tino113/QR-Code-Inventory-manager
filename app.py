@@ -9,7 +9,7 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import or_, and_
-from sqlalchemy.orm import foreign
+from sqlalchemy.orm import foreign, backref
 import qrcode
 import glob
 import json
@@ -25,7 +25,10 @@ import csv
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///inventory.db'
 app.config['SQLALCHEMY_BINDS'] = {
-    'users': 'sqlite:///users.db'
+    'users': 'sqlite:///users.db',
+    'locations': 'sqlite:///locations.db',
+    'containers': 'sqlite:///containers.db',
+    'items': 'sqlite:///items.db'
 }
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
@@ -70,6 +73,7 @@ class Preference(db.Model):
 
 
 class Location(db.Model, TimestampMixin):
+    __bind_key__ = 'locations'
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String, unique=True, nullable=False)
     name = db.Column(db.String, nullable=False)
@@ -86,9 +90,18 @@ class Location(db.Model, TimestampMixin):
                                  primaryjoin='User.id==foreign(Location.updated_by_id)',
                                  foreign_keys=[updated_by_id])
 
-    items = db.relationship('Item', backref='location', lazy=True)
-    containers = db.relationship('Container', backref='location', lazy=True)
-    histories = db.relationship('History', backref='location', lazy=True)
+    items = db.relationship('Item',
+                             primaryjoin='Location.id==foreign(Item.location_id)',
+                             backref=backref('location', primaryjoin='Location.id==foreign(Item.location_id)'),
+                             lazy=True)
+    containers = db.relationship('Container',
+                                 primaryjoin='Location.id==foreign(Container.location_id)',
+                                 backref=backref('location', primaryjoin='Location.id==foreign(Container.location_id)'),
+                                 lazy=True)
+    histories = db.relationship('History',
+                                 primaryjoin='Location.id==foreign(History.location_id)',
+                                 backref=backref('location', primaryjoin='Location.id==foreign(History.location_id)'),
+                                 lazy=True)
 
     def full_path(self):
         parts = [self.name]
@@ -120,6 +133,7 @@ class Location(db.Model, TimestampMixin):
 
 
 class Container(db.Model, TimestampMixin):
+    __bind_key__ = 'containers'
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String, unique=True, nullable=False)
     name = db.Column(db.String)
@@ -128,7 +142,7 @@ class Container(db.Model, TimestampMixin):
     image = db.Column(db.String)
     missing = db.Column(db.Boolean, default=False)
     custom_data = db.Column(db.Text)
-    location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    location_id = db.Column(db.Integer)
     parent_id = db.Column(db.Integer, db.ForeignKey('container.id'))
     created_by_id = db.Column(db.Integer)
     updated_by_id = db.Column(db.Integer)
@@ -139,8 +153,14 @@ class Container(db.Model, TimestampMixin):
                                  primaryjoin='User.id==foreign(Container.updated_by_id)',
                                  foreign_keys=[updated_by_id])
     parent = db.relationship('Container', remote_side=[id], backref='children')
-    items = db.relationship('Item', backref='container', lazy=True)
-    histories = db.relationship('History', backref='container', lazy=True)
+    items = db.relationship('Item',
+                             primaryjoin='Container.id==foreign(Item.container_id)',
+                             backref=backref('container', primaryjoin='Container.id==foreign(Item.container_id)'),
+                             lazy=True)
+    histories = db.relationship('History',
+                                 primaryjoin='Container.id==foreign(History.container_id)',
+                                 backref=backref('container', primaryjoin='Container.id==foreign(History.container_id)'),
+                                 lazy=True)
 
     def full_path(self):
         parts = [self.name or self.code]
@@ -172,6 +192,7 @@ class Container(db.Model, TimestampMixin):
 
 
 class Item(db.Model, TimestampMixin):
+    __bind_key__ = 'items'
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String, unique=True, nullable=False)
     name = db.Column(db.String, nullable=False)
@@ -180,8 +201,8 @@ class Item(db.Model, TimestampMixin):
     image = db.Column(db.String)
     missing = db.Column(db.Boolean, default=False)
     custom_data = db.Column(db.Text)
-    container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    container_id = db.Column(db.Integer)
+    location_id = db.Column(db.Integer)
     created_by_id = db.Column(db.Integer)
     updated_by_id = db.Column(db.Integer)
     created_by = db.relationship('User',
@@ -190,7 +211,10 @@ class Item(db.Model, TimestampMixin):
     updated_by = db.relationship('User',
                                  primaryjoin='User.id==foreign(Item.updated_by_id)',
                                  foreign_keys=[updated_by_id])
-    histories = db.relationship('History', backref='item', lazy=True)
+    histories = db.relationship('History',
+                                 primaryjoin='Item.id==foreign(History.item_id)',
+                                 backref=backref('item', primaryjoin='Item.id==foreign(History.item_id)'),
+                                 lazy=True)
 
     def hierarchy(self):
         parts = []
@@ -219,9 +243,9 @@ class Item(db.Model, TimestampMixin):
 class History(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=dt.datetime.utcnow)
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'))
-    container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
+    item_id = db.Column(db.Integer)
+    container_id = db.Column(db.Integer)
+    location_id = db.Column(db.Integer)
     user_id = db.Column(db.Integer)
     action = db.Column(db.String)
     description = db.Column(db.Text)
@@ -300,7 +324,8 @@ def migrate_sqlite(path, models, bind=None):
     db.session.remove()
     engine = db.get_engine(app, bind=bind) if bind else db.engine
     if not os.path.exists(path):
-        db.create_all(bind_key=bind)
+        for model in models:
+            model.__table__.create(bind=engine, checkfirst=True)
         return
     import sqlite3
     conn = sqlite3.connect(path)
@@ -319,24 +344,46 @@ def migrate_sqlite(path, models, bind=None):
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {col.name} {coltype}")
     conn.commit()
     conn.close()
-    db.create_all(bind_key=bind)
+
+
+def split_legacy_inventory():
+    if not os.path.exists('inventory.db'):
+        return
+    import sqlite3
+    conn = sqlite3.connect('inventory.db')
+    cur = conn.cursor()
+    mapping = [
+        ('location', Location),
+        ('container', Container),
+        ('item', Item),
+        ('user', User),
+        ('preference', Preference),
+    ]
+    for table, model in mapping:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+        if not cur.fetchone():
+            continue
+        if db.session.query(model).first():
+            continue
+        cols = [r[1] for r in cur.execute(f"PRAGMA table_info({table})")]
+        rows = cur.execute(f"SELECT * FROM {table}").fetchall()
+        for row in rows:
+            data = dict(zip(cols, row))
+            obj = model()
+            for col in model.__table__.columns.keys():
+                if col in data:
+                    setattr(obj, col, data[col])
+            db.session.add(obj)
+    db.session.commit()
+    conn.close()
 
 def setup_database():
-    db.create_all()
-    inventory_models = (Location, Container, Item, History, Relation)
-    user_models = (User, Preference)
-    for model in inventory_models:
-        try:
-            db.session.query(model).first()
-        except Exception:
-            migrate_sqlite('inventory.db', inventory_models)
-            break
-    for model in user_models:
-        try:
-            db.session.query(model).first()
-        except Exception:
-            migrate_sqlite('users.db', user_models, bind='users')
-            break
+    migrate_sqlite('inventory.db', (History, Relation))
+    migrate_sqlite('users.db', (User, Preference), bind='users')
+    migrate_sqlite('locations.db', (Location,), bind='locations')
+    migrate_sqlite('containers.db', (Container,), bind='containers')
+    migrate_sqlite('items.db', (Item,), bind='items')
+    split_legacy_inventory()
     ensure_admin()
 
 
@@ -927,8 +974,35 @@ def admin_upload_db():
             filename = secure_filename(file.filename)
             temp = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(temp)
-            shutil.move(temp, 'inventory.db')
-            migrate_sqlite('inventory.db', (Location, Container, Item, History, Relation))
+            import sqlite3
+            conn = sqlite3.connect(temp)
+            cur = conn.cursor()
+            table_map = [
+                ('location', Location),
+                ('container', Container),
+                ('item', Item),
+                ('history', History),
+                ('relation', Relation),
+                ('user', User),
+                ('preference', Preference)
+            ]
+            for table, model in table_map:
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
+                if not cur.fetchone():
+                    continue
+                cols = [r[1] for r in cur.execute(f"PRAGMA table_info({table})")]
+                rows = cur.execute(f"SELECT * FROM {table}").fetchall()
+                db.session.query(model).delete()
+                for row in rows:
+                    data = dict(zip(cols, row))
+                    obj = model()
+                    for col in model.__table__.columns.keys():
+                        if col in data:
+                            setattr(obj, col, data[col])
+                    db.session.add(obj)
+            db.session.commit()
+            conn.close()
+            os.remove(temp)
             flash('Database uploaded and migrated', 'info')
             return redirect(url_for('index'))
     return render_template('upload_db.html')
@@ -939,7 +1013,14 @@ def admin_download_db():
     user = current_user()
     if not user or not user.is_admin:
         abort(403)
-    return send_file('inventory.db', as_attachment=True)
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, 'w') as z:
+        for fname in ('inventory.db', 'users.db', 'locations.db', 'containers.db', 'items.db'):
+            if os.path.exists(fname):
+                z.write(fname)
+    mem.seek(0)
+    return send_file(mem, mimetype='application/zip', as_attachment=True,
+                     download_name='databases.zip')
 
 
 @app.route('/admin/download/csv')

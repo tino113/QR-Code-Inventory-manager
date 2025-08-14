@@ -2,8 +2,8 @@
 {% block content %}
 <h2>Admin Summary</h2>
 <div class="mb-3">
-  <a class="btn btn-outline-primary me-2" href="{{ url_for('admin_download_db') }}">Download DB</a>
-  <a class="btn btn-outline-primary me-2" href="{{ url_for('admin_download_csv') }}">Download CSV & Assets</a>
+  <a class="btn btn-outline-primary me-2" href="{{ url_for('admin_download_db') }}" download="databases.zip" data-auth-download>Download DB</a>
+  <a class="btn btn-outline-primary me-2" href="{{ url_for('admin_download_csv') }}" download="inventory_export.zip" data-auth-download>Download CSV & Assets</a>
   <a class="btn btn-outline-primary" href="{{ url_for('admin_import_csv') }}">Import CSV</a>
 </div>
 <form class="row g-2 mb-2" method="get">

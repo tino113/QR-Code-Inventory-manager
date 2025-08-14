@@ -89,6 +89,23 @@ document.querySelectorAll('.timestamp').forEach(el=>{
   }
 });
 </script>
+<script>
+document.addEventListener('click', async e => {
+  const link = e.target.closest('a[data-auth-download]');
+  if (!link) return;
+  e.preventDefault();
+  const resp = await fetch(link.href, {credentials:'include'});
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = link.getAttribute('download') || link.href.split('/').pop();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+</script>
 </body>
 </html>
 

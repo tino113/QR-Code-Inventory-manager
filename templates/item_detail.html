@@ -5,7 +5,7 @@
   <img src="{{ url_for('static', filename=item.image) }}" class="img-fluid mb-3 mx-auto d-block" style="max-width:200px;">
 {% endif %}
 <img src="{{ url_for('static', filename='qr/' + item.code + '.png') }}" class="mb-3 mx-auto d-block qr-img">
-<a class="btn btn-primary mb-3 d-block mx-auto" download href="{{ url_for('static', filename='qr/' + item.code + '.png') }}">Download QR</a>
+<a class="btn btn-primary mb-3 d-block mx-auto" download data-auth-download href="{{ url_for('static', filename='qr/' + item.code + '.png') }}">Download QR</a>
 <table class="table table-sm mb-3">
   <tr><th>Code</th><td>{{ item.code }}</td></tr>
   <tr><th>Type</th><td>{{ item.type }}</td></tr>
