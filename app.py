@@ -1229,7 +1229,7 @@ def scan(code):
         return redirect(url_for('index'))
 
     now = dt.datetime.utcnow()
-    window = float(request.args.get('window', 10))
+    window = float(request.args.get('window', 5))
     message = None
     handled = False
 
