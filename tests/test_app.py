@@ -198,6 +198,35 @@ def test_scan_container_pair_timeout():
         assert inner.location_id == outer.location_id
 
 
+def test_scan_multiple_items_to_container_includes_last():
+    client = app.test_client()
+    login(client)
+    with app.app_context():
+        u = User.query.first()
+        loc = Location(name='MultiRoom', code='LC-multi', created_by=u, updated_by=u)
+        cont = Container(name='Bin', code='CT-bin', created_by=u, updated_by=u, location=loc)
+        db.session.add_all([loc, cont])
+        items = []
+        for i in range(3):
+            it = Item(name=f'Widget{i}', type='Tool', quantity=1, code=f'IT-w{i}', created_by=u, updated_by=u)
+            db.session.add(it)
+            items.append(it)
+        db.session.commit()
+        for obj in [loc, cont] + items:
+            if not Path(qr_path(obj.code)).exists():
+                generate_qr(obj.code)
+        cont_code = cont.code
+        item_codes = [it.code for it in items]
+    client.get(f'/scan/{cont_code}')
+    for code in item_codes:
+        client.get(f'/scan/{code}')
+    with app.app_context():
+        cont = Container.query.filter_by(code=cont_code).first()
+        for code in item_codes:
+            it = Item.query.filter_by(code=code).first()
+            assert it.container_id == cont.id
+
+
 def test_scan_multiple_items_to_container():
     client = app.test_client()
     login(client)
