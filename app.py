@@ -6,6 +6,8 @@ from flask import (Flask, render_template, request, redirect, url_for, session,
                    flash, jsonify, abort, send_file, Response)
 from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
+from models import db, User, Preference, Location, Container, Item, History, Relation
+from utils import (current_user, generate_code, qr_path, generate_qr, generate_pdf, generate_images, parse_custom_data, maybe_title, create_items_from_spec, reassign_code, save_image, log_action)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import or_, and_
@@ -32,218 +34,10 @@ app.config['UPLOAD_FOLDER'] = os.path.join('static', 'uploads')
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(os.path.join('static', 'qr'), exist_ok=True)
 app.secret_key = 'inventory-secret'
-
-db = SQLAlchemy(app)
-
-
-class TimestampMixin:
-    created_at = db.Column(db.DateTime, default=dt.datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=dt.datetime.utcnow,
-                           onupdate=dt.datetime.utcnow)
+db.init_app(app)
 
 
-class User(db.Model):
-    __bind_key__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String, unique=True, nullable=False)
-    password_hash = db.Column(db.String, nullable=False)
-    must_change = db.Column(db.Boolean, default=False)
-    image = db.Column(db.String)
-    theme_light = db.Column(db.String, default='#800080')
-    theme_dark = db.Column(db.String, default='#ffeb3b')
-    is_admin = db.Column(db.Boolean, default=False)
 
-    def set_password(self, password: str):
-        self.password_hash = generate_password_hash(password)
-
-    def check_password(self, password: str) -> bool:
-        return check_password_hash(self.password_hash, password)
-
-
-class Preference(db.Model):
-    __bind_key__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    key = db.Column(db.String, nullable=False)
-    value = db.Column(db.String, nullable=False)
-    __table_args__ = (db.UniqueConstraint('user_id', 'key'),)
-
-
-class Location(db.Model, TimestampMixin):
-    id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String, unique=True, nullable=False)
-    name = db.Column(db.String, nullable=False)
-    parent_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    parent = db.relationship('Location', remote_side=[id], backref='children')
-    image = db.Column(db.String)
-    custom_data = db.Column(db.Text)
-    created_by_id = db.Column(db.Integer)
-    updated_by_id = db.Column(db.Integer)
-    created_by = db.relationship('User',
-                                 primaryjoin='User.id==foreign(Location.created_by_id)',
-                                 foreign_keys=[created_by_id])
-    updated_by = db.relationship('User',
-                                 primaryjoin='User.id==foreign(Location.updated_by_id)',
-                                 foreign_keys=[updated_by_id])
-
-    items = db.relationship('Item', backref='location', lazy=True)
-    containers = db.relationship('Container', backref='location', lazy=True)
-    histories = db.relationship('History', backref='location', lazy=True)
-
-    def full_path(self):
-        parts = [self.name]
-        cur = self.parent
-        while cur:
-            parts.append(cur.name)
-            cur = cur.parent
-        return ' / '.join(parts)
-
-    def all_items(self):
-        seen = {}
-        for i in self.items:
-            seen[i.id] = i
-        for c in self.containers:
-            for i in c.all_items():
-                seen[i.id] = i
-        for child in self.children:
-            for i in child.all_items():
-                seen[i.id] = i
-        return list(seen.values())
-
-    def all_containers(self):
-        conts = []
-        for c in self.containers:
-            conts.extend(c.all_containers())
-        for child in self.children:
-            conts.extend(child.all_containers())
-        return conts
-
-
-class Container(db.Model, TimestampMixin):
-    id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String, unique=True, nullable=False)
-    name = db.Column(db.String)
-    size = db.Column(db.String)
-    color = db.Column(db.String)
-    image = db.Column(db.String)
-    missing = db.Column(db.Boolean, default=False)
-    custom_data = db.Column(db.Text)
-    location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    parent_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    created_by_id = db.Column(db.Integer)
-    updated_by_id = db.Column(db.Integer)
-    created_by = db.relationship('User',
-                                 primaryjoin='User.id==foreign(Container.created_by_id)',
-                                 foreign_keys=[created_by_id])
-    updated_by = db.relationship('User',
-                                 primaryjoin='User.id==foreign(Container.updated_by_id)',
-                                 foreign_keys=[updated_by_id])
-    parent = db.relationship('Container', remote_side=[id], backref='children')
-    items = db.relationship('Item', backref='container', lazy=True)
-    histories = db.relationship('History', backref='container', lazy=True)
-
-    def full_path(self):
-        parts = [self.name or self.code]
-        cur = self.parent
-        while cur:
-            parts.append(cur.name or cur.code)
-            cur = cur.parent
-        return ' / '.join(parts)
-
-    def all_items(self):
-        items = list(self.items)
-        for child in self.children:
-            items.extend(child.all_items())
-        return items
-
-    def all_containers(self):
-        conts = [self]
-        for child in self.children:
-            conts.extend(child.all_containers())
-        return conts
-
-    def path_from(self, loc):
-        parts = []
-        cur = self.location
-        while cur and cur != loc:
-            parts.append(cur.name)
-            cur = cur.parent
-        return ' / '.join(parts)
-
-
-class Item(db.Model, TimestampMixin):
-    id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String, unique=True, nullable=False)
-    name = db.Column(db.String, nullable=False)
-    type = db.Column(db.String, nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
-    image = db.Column(db.String)
-    missing = db.Column(db.Boolean, default=False)
-    custom_data = db.Column(db.Text)
-    container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    created_by_id = db.Column(db.Integer)
-    updated_by_id = db.Column(db.Integer)
-    created_by = db.relationship('User',
-                                 primaryjoin='User.id==foreign(Item.created_by_id)',
-                                 foreign_keys=[created_by_id])
-    updated_by = db.relationship('User',
-                                 primaryjoin='User.id==foreign(Item.updated_by_id)',
-                                 foreign_keys=[updated_by_id])
-    histories = db.relationship('History', backref='item', lazy=True)
-
-    def hierarchy(self):
-        parts = []
-        if self.container:
-            parts.append(self.container.full_path())
-            if self.container.location:
-                parts.append(self.container.location.full_path())
-        elif self.location:
-            parts.append(self.location.full_path())
-        return ' / '.join(parts)
-
-    def path_from(self, loc):
-        parts = []
-        container = self.container
-        if container:
-            parts.append(container.full_path())
-            cur = container.location
-        else:
-            cur = self.location
-        while cur and cur != loc:
-            parts.append(cur.name)
-            cur = cur.parent
-        return ' / '.join(parts)
-
-
-class History(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    timestamp = db.Column(db.DateTime, default=dt.datetime.utcnow)
-    item_id = db.Column(db.Integer, db.ForeignKey('item.id'))
-    container_id = db.Column(db.Integer, db.ForeignKey('container.id'))
-    location_id = db.Column(db.Integer, db.ForeignKey('location.id'))
-    user_id = db.Column(db.Integer)
-    action = db.Column(db.String)
-    description = db.Column(db.Text)
-    user = db.relationship('User',
-                           primaryjoin='User.id==foreign(History.user_id)',
-                           foreign_keys=[user_id],
-                           backref='histories')
-
-
-class Relation(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    first_type = db.Column(db.String, nullable=False)
-    first_id = db.Column(db.Integer, nullable=False)
-    second_type = db.Column(db.String, nullable=False)
-    second_id = db.Column(db.Integer, nullable=False)
-
-
-def current_user():
-    uid = session.get('user_id')
-    if uid:
-        return User.query.get(uid)
-    return None
 
 
 @app.context_processor
@@ -342,237 +136,6 @@ def setup_database():
 
 with app.app_context():
     setup_database()
-
-
-def generate_code(prefix: str) -> str:
-    """Generate a unique code with the given prefix.
-
-    The function ensures the generated code is not already associated with
-    any existing item, container or location and that no QR image exists for
-    it yet. This prevents accidental reuse of codes when generating batches of
-    QR codes."""
-    while True:
-        code = f"{prefix}-{uuid.uuid4().hex[:8]}"
-        exists = (Item.query.filter_by(code=code).first() or
-                  Container.query.filter_by(code=code).first() or
-                  Location.query.filter_by(code=code).first())
-        if exists or os.path.exists(qr_path(code)):
-            continue
-        return code
-
-
-def qr_path(code: str) -> str:
-    return os.path.join('static', 'qr', f'{code}.png')
-
-
-def generate_qr(code: str):
-    img = qrcode.make(code)
-    path = qr_path(code)
-    img.save(path)
-    return path
-
-
-def _qr_pages(codes, cols, rows):
-    """Return PIL Images containing grids of codes."""
-    width, height = 2480, 3508  # A4 at 300 DPI
-    margin = 100  # small margin for printers
-    side = min((width - margin * 2) // cols,
-               (height - margin * 2) // rows)
-    margin_x = (width - side * cols) // 2
-    margin_y = (height - side * rows) // 2
-    per_page = cols * rows
-    pages = []
-    for page_idx in range(math.ceil(len(codes) / per_page)):
-        page = Image.new('RGB', (width, height), 'white')
-        for cell in range(per_page):
-            idx = page_idx * per_page + cell
-            if idx >= len(codes):
-                break
-            img = Image.open(qr_path(codes[idx])).resize((side, side))
-            x = margin_x + (cell % cols) * side
-            y = margin_y + (cell // cols) * side
-            page.paste(img, (x, y))
-        pages.append(page)
-    return pages
-
-
-def generate_pdf(codes, path, cols=4, rows=8):
-    pages = _qr_pages(codes, cols, rows)
-    if not pages:
-        return
-    pages[0].save(path, 'PDF', resolution=300.0,
-                  save_all=True, append_images=pages[1:])
-
-
-def generate_images(codes, base_path, cols=4, rows=8):
-    """Generate A4-sized PNG pages and return their paths."""
-    pages = _qr_pages(codes, cols, rows)
-    files = []
-    for i, page in enumerate(pages, 1):
-        fname = f"{base_path}_{i}.png"
-        page.save(fname, 'PNG')
-        files.append(fname)
-    return files
-
-
-def parse_custom_data(data_str):
-    if not data_str:
-        return None
-    try:
-        obj = json.loads(data_str)
-    except Exception:
-        obj = {}
-        for line in data_str.splitlines():
-            if ':' in line:
-                k, v = line.split(':', 1)
-            elif '=' in line:
-                k, v = line.split('=', 1)
-            else:
-                continue
-            obj[k.strip()] = v.strip()
-    return json.dumps(obj)
-
-
-def maybe_title(value: str) -> str:
-    value = value.strip()
-    if value and value[0].isalpha():
-        return value.title()
-    return value
-
-
-def create_items_from_spec(container, spec: str):
-    for part in spec.split(','):
-        part = part.strip()
-        if not part:
-            continue
-        tokens = part.split()
-        if not tokens:
-            continue
-        name = maybe_title(tokens[0])
-        quantity = 1
-        type_ = 'Misc'
-        if len(tokens) > 1:
-            if tokens[1].isdigit():
-                quantity = int(tokens[1])
-                if len(tokens) > 2:
-                    type_ = maybe_title(' '.join(tokens[2:]))
-            else:
-                type_ = maybe_title(' '.join(tokens[1:]))
-        code = generate_code('IT')
-        item = Item(name=name, type=type_, quantity=quantity, code=code,
-                    container=container, location=container.location,
-                    created_by=current_user(), updated_by=current_user())
-        db.session.add(item)
-        db.session.flush()
-        generate_qr(code)
-        log_action('created item', item=item)
-
-
-def reassign_code(code):
-    existing = (Item.query.filter_by(code=code).first() or
-                Container.query.filter_by(code=code).first() or
-                Location.query.filter_by(code=code).first())
-    if existing:
-        prefix = existing.code.split('-')[0]
-        new_code = generate_code(prefix)
-        old_qr = qr_path(existing.code)
-        existing.code = new_code
-        db.session.commit()
-        if os.path.exists(old_qr):
-            os.remove(old_qr)
-        generate_qr(new_code)
-        log_action('regenerated code', item=existing if isinstance(existing, Item) else None,
-                   container=existing if isinstance(existing, Container) else None,
-                   location=existing if isinstance(existing, Location) else None)
-
-
-def save_image(file, code: str):
-    if file and file.filename:
-        ext = os.path.splitext(file.filename)[1]
-        filename = secure_filename(f"{code}{ext}")
-        rel_path = os.path.join('uploads', filename).replace('\\', '/')
-        file.save(os.path.join('static', rel_path))
-        return rel_path
-    return None
-
-
-def log_action(action, item=None, container=None, location=None, description=None):
-    if description is None:
-        if action == 'item to container' and item and container:
-            description = (
-                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> "
-                f"was moved to <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a>"
-            )
-        elif action == 'item to location' and item and location:
-            description = (
-                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> "
-                f"was moved to <a href='{url_for('location_detail', code=location.code)}'><b>{location.name}</b></a>"
-            )
-        elif action == 'container to location' and container and location:
-            description = (
-                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> "
-                f"was moved to <a href='{url_for('location_detail', code=location.code)}'><b>{location.name}</b></a>"
-            )
-        elif action == 'created item' and item:
-            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was created"
-        elif action == 'created container' and container:
-            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> was created"
-        elif action == 'created location' and location:
-            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> was created"
-        elif action == 'edited item' and item:
-            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was edited"
-        elif action == 'edited container' and container:
-            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> was edited"
-        elif action == 'edited location' and location:
-            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> was edited"
-        elif action == 'deleted item' and item:
-            description = f"<b>{item.name}</b> was deleted"
-        elif action == 'deleted container' and container:
-            description = f"<b>{container.name}</b> was deleted"
-        elif action == 'deleted location' and location:
-            description = f"<b>{location.name}</b> was deleted"
-        elif action == 'reported missing item' and item:
-            description = (
-                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was reported missing"
-            )
-        elif action == 'reported missing container' and container:
-            description = (
-                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported missing"
-            )
-        elif action == 'reported found item' and item:
-            description = (
-                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was reported found"
-            )
-        elif action == 'reported found container' and container:
-            description = (
-                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was reported found"
-            )
-        elif action == 'removed from location' and item:
-            description = (
-                f"Item <a href='{url_for('item_detail', code=item.code)}'><b>{item.name}</b></a> was removed from its location"
-            )
-        elif action == 'removed container from location' and container:
-            description = (
-                f"Container <a href='{url_for('container_detail', code=container.code)}'><b>{container.name}</b></a> was removed from its location"
-            )
-        elif action == 'regenerated code' and item:
-            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> QR code regenerated"
-        elif action == 'regenerated container code' and container:
-            description = f"<b><a href='{url_for('container_detail', code=container.code)}'>{container.name}</a></b> QR code regenerated"
-        elif action == 'regenerated location code' and location:
-            description = f"<b><a href='{url_for('location_detail', code=location.code)}'>{location.name}</a></b> QR code regenerated"
-        elif action == 'split' and item:
-            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was split"
-        elif action == 'split from' and item:
-            description = f"<b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b> was created from a split"
-        elif action == 'joined item' and item:
-            description = f"Items were joined into <b><a href='{url_for('item_detail', code=item.code)}'>{item.name}</a></b>"
-        else:
-            description = action
-    h = History(action=action, description=description, item=item,
-                container=container, location=location, user=current_user())
-    db.session.add(h)
-    db.session.commit()
 
 
 @app.route('/')
@@ -1530,103 +1093,26 @@ def scan(code):
 
     now = dt.datetime.utcnow()
     window = float(request.args.get('window', 5))
-    message = None
-    handled = False
+    force_process = window == 0
 
-    pending = session.get('pending_containers')
-    if pending:
-        last_time = dt.datetime.fromisoformat(pending['time'])
-        if (now - last_time).total_seconds() > pending.get('window', window):
-            process_pair(pending['first'], pending['second'])
-            session.pop('pending_containers')
-        else:
-            process_pair(pending['second'], pending['first'])
-            session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
-            session.pop('pending_containers')
-            if isinstance(obj, (Item, Container)):
-                message = process_pair(code, pending['first'])
-                session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
-                session.pop('last_scan', None)
-                handled = True
-            elif isinstance(obj, Location):
-                message = process_pair(pending['first'], code)
-                session.pop('batch_container', None)
-                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-                session.pop('last_scan', None)
-                handled = True
+    scans = session.get('scan_codes', [])
+    last_time = session.get('scan_time')
+    if last_time and not force_process:
+        last_dt = dt.datetime.fromisoformat(last_time)
+        if (now - last_dt).total_seconds() > window:
+            scans = []
 
-    if not handled:
-        batch_c = session.get('batch_container')
-        if batch_c:
-            last_time = dt.datetime.fromisoformat(batch_c['time'])
-            if (now - last_time).total_seconds() > batch_c.get('window', window):
-                session.pop('batch_container')
-                batch_c = None
-        if batch_c and isinstance(obj, (Item, Container)):
-            message = process_pair(code, batch_c['code'])
-            session['batch_container'] = {'code': batch_c['code'], 'time': now.isoformat(), 'window': window}
-            session.pop('last_scan', None)
-            handled = True
-        elif batch_c and isinstance(obj, Location):
-            message = process_pair(batch_c['code'], code)
-            session.pop('batch_container')
-            session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-            session.pop('last_scan', None)
-            handled = True
+    if code not in scans:
+        scans.append(code)
+    session['scan_time'] = now.isoformat()
 
-    if not handled:
-        batch = session.get('batch_location')
-        if batch:
-            last_time = dt.datetime.fromisoformat(batch['time'])
-            if (now - last_time).total_seconds() > batch.get('window', window):
-                session.pop('batch_location')
-                batch = None
-        if batch and isinstance(obj, (Item, Container)):
-            message = process_pair(code, batch['code'])
-            session['batch_location'] = {'code': batch['code'], 'time': now.isoformat(), 'window': window}
-            session.pop('last_scan', None)
-            handled = True
+    remaining, message = process_multiple(scans)
 
-    if not handled:
-        last = session.get('last_scan')
-        if last:
-            last_time = dt.datetime.fromisoformat(last['time'])
-            if ((now - last_time).total_seconds() <= last.get('window', window)
-                    and last['code'] != code):
-                first_obj = (Item.query.filter_by(code=last['code']).first() or
-                             Container.query.filter_by(code=last['code']).first() or
-                             Location.query.filter_by(code=last['code']).first())
-                if isinstance(first_obj, Container) and isinstance(obj, Item):
-                    message = process_pair(code, last['code'])
-                    session['batch_container'] = {'code': last['code'], 'time': now.isoformat(), 'window': window}
-                    session.pop('last_scan')
-                elif isinstance(first_obj, Container) and isinstance(obj, Container):
-                    session['pending_containers'] = {
-                        'first': last['code'],
-                        'second': code,
-                        'time': now.isoformat(),
-                        'window': window,
-                    }
-                    session.pop('last_scan')
-                else:
-                    message = process_pair(last['code'], code)
-                    session.pop('last_scan')
-                    if isinstance(obj, Container) and isinstance(first_obj, Item):
-                        session['batch_container'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                    elif isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
-                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                    elif isinstance(first_obj, Location) and isinstance(obj, (Item, Container)):
-                        session['batch_location'] = {'code': first_obj.code, 'time': now.isoformat(), 'window': window}
-                    elif isinstance(first_obj, Location) and isinstance(obj, Location):
-                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                    else:
-                        session.pop('batch_location', None)
-        else:
-            session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
-            if isinstance(obj, Location):
-                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-            else:
-                session.pop('batch_location', None)
+    if force_process:
+        session.pop('scan_codes', None)
+        session.pop('scan_time', None)
+    else:
+        session['scan_codes'] = remaining
 
     if request.args.get('ajax'):
         name = getattr(obj, 'name', None)
@@ -1646,36 +1132,67 @@ def process_pair(first_code: str, second_code: str) -> str:
     second = (Item.query.filter_by(code=second_code).first() or
               Container.query.filter_by(code=second_code).first() or
               Location.query.filter_by(code=second_code).first())
+
+    # item-item -> no action
+    if isinstance(first, Item) and isinstance(second, Item):
+        return 'No action for scanned pair.'
+
+    # item-container or container-item -> item goes into container
     if isinstance(first, Item) and isinstance(second, Container):
-        first.container = second
-        first.location = None
-        first.updated_by = current_user()
+        child, parent = first, second
+    elif isinstance(first, Container) and isinstance(second, Item):
+        child, parent = second, first
+    else:
+        child = parent = None
+    if child and parent:
+        child.container = parent
+        child.location = None
+        child.updated_by = current_user()
         db.session.commit()
-        msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to container', item=first, container=second)
+        msg = f'Item <b>{child.name}</b> was moved to <b>{parent.name}</b>'
+        log_action('item to container', item=child, container=parent)
         return msg
+
+    # item-location or location-item -> item to location
     if isinstance(first, Item) and isinstance(second, Location):
-        first.location = second
-        first.container = None
-        first.updated_by = current_user()
+        itm, loc = first, second
+    elif isinstance(first, Location) and isinstance(second, Item):
+        itm, loc = second, first
+    else:
+        itm = loc = None
+    if itm and loc:
+        itm.location = loc
+        itm.container = None
+        itm.updated_by = current_user()
         db.session.commit()
-        msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to location', item=first, location=second)
+        msg = f'Item <b>{itm.name}</b> was moved to <b>{loc.name}</b>'
+        log_action('item to location', item=itm, location=loc)
         return msg
+
+    # container-location or location-container -> container to location
     if isinstance(first, Container) and isinstance(second, Location):
-        first.location = second
-        first.updated_by = current_user()
+        cont, loc = first, second
+    elif isinstance(first, Location) and isinstance(second, Container):
+        cont, loc = second, first
+    else:
+        cont = loc = None
+    if cont and loc:
+        cont.location = loc
+        cont.parent = None
+        cont.updated_by = current_user()
         db.session.commit()
-        msg = f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('container to location', container=first, location=second)
-        for it in first.items:
-            it.location = second
+        msg = f'Container <b>{cont.name}</b> was moved to <b>{loc.name}</b>'
+        log_action('container to location', container=cont, location=loc)
+        for it in cont.items:
+            it.location = loc
             it.updated_by = current_user()
-            db.session.add(History(item=it, location=second,
+            db.session.add(History(item=it, location=loc,
                                    user=current_user(), action='item to location',
-                                   description=f'Item <b>{it.name}</b> was moved to <b>{second.name}</b>'))
+                                   description=f'Item <b>{it.name}</b> was moved to <b>{loc.name}</b>'))
         db.session.commit()
         return msg
+
+    # container-container -> first container into second
     if isinstance(first, Container) and isinstance(second, Container):
         first.parent = second
         first.location = second.location
@@ -1688,29 +1205,8 @@ def process_pair(first_code: str, second_code: str) -> str:
                        f"was stored in <a href='{url_for('container_detail', code=second.code)}'><b>{second.name}</b></a>"
                    ))
         return msg
-    if isinstance(first, Location) and isinstance(second, Item):
-        second.location = first
-        second.container = None
-        second.updated_by = current_user()
-        db.session.commit()
-        msg = f'Item <b>{second.name}</b> was moved to <b>{first.name}</b>'
-        log_action('item to location', item=second, location=first)
-        return msg
-    if isinstance(first, Location) and isinstance(second, Container):
-        second.location = first
-        second.parent = None
-        second.updated_by = current_user()
-        db.session.commit()
-        msg = f'Container <b>{second.name}</b> was moved to <b>{first.name}</b>'
-        log_action('container to location', container=second, location=first)
-        for it in second.items:
-            it.location = first
-            it.updated_by = current_user()
-            db.session.add(History(item=it, location=first,
-                                   user=current_user(), action='item to location',
-                                   description=f'Item <b>{it.name}</b> was moved to <b>{first.name}</b>'))
-        db.session.commit()
-        return msg
+
+    # location-location -> first location becomes child of second
     if isinstance(first, Location) and isinstance(second, Location):
         first.parent = second
         first.updated_by = current_user()
@@ -1718,7 +1214,78 @@ def process_pair(first_code: str, second_code: str) -> str:
         msg = f'Location <b>{first.name}</b> was moved under <b>{second.name}</b>'
         log_action('edited location', location=first)
         return msg
+
     return 'No action for scanned pair.'
+
+
+def process_multiple(codes: list[str]) -> tuple[list[str], str | None]:
+    """Process a list of scanned codes according to the pairing rules.
+
+    Returns a tuple of (remaining_codes, message). remaining_codes contains
+    codes that should be kept for subsequent scans (e.g. a container or
+    location acting as the parent for further items). message is the last
+    action performed, if any.
+    """
+
+    objs = []
+    for c in codes:
+        obj = (Item.query.filter_by(code=c).first() or
+               Container.query.filter_by(code=c).first() or
+               Location.query.filter_by(code=c).first())
+        if obj:
+            objs.append(obj)
+
+    if len(objs) < 2:
+        return codes, None
+
+    items = [o for o in objs if isinstance(o, Item)]
+    containers = [o for o in objs if isinstance(o, Container)]
+    locations = [o for o in objs if isinstance(o, Location)]
+    messages: list[str] = []
+
+    # Exactly two codes - just process the pair and determine base
+    if len(objs) == 2:
+        msg = process_pair(codes[0], codes[1])
+        messages.append(msg)
+        base: list[str] = []
+        if ((isinstance(objs[0], Item) and isinstance(objs[1], Container)) or
+                (isinstance(objs[0], Container) and isinstance(objs[1], Item)) or
+                (isinstance(objs[0], Container) and isinstance(objs[1], Container))):
+            base_code = objs[0].code if isinstance(objs[0], Container) and isinstance(objs[1], Item) else objs[1].code
+            base = [base_code]
+        elif ((isinstance(objs[0], Item) and isinstance(objs[1], Location)) or
+              (isinstance(objs[0], Location) and isinstance(objs[1], Item)) or
+              (isinstance(objs[0], Container) and isinstance(objs[1], Location)) or
+              (isinstance(objs[0], Location) and isinstance(objs[1], Container)) or
+              (isinstance(objs[0], Location) and isinstance(objs[1], Location))):
+            base_code = objs[0].code if isinstance(objs[0], Location) and not isinstance(objs[1], Location) else objs[1].code
+            base = [base_code]
+        return base, messages[-1]
+
+    # More than two codes
+    if len(locations) == 1 and len(containers) + len(items) >= 1:
+        loc = locations[0]
+        for obj in [o for o in objs if o is not loc]:
+            messages.append(process_pair(obj.code, loc.code))
+        return [loc.code], messages[-1]
+
+    if len(containers) == 1 and len(locations) == 0:
+        cont = containers[0]
+        for obj in [o for o in objs if o is not cont]:
+            messages.append(process_pair(obj.code, cont.code))
+        return [cont.code], messages[-1]
+
+    if len(locations) >= 2 and len(containers) == 0 and len(items) == 0:
+        base_loc = locations[0]
+        for loc in locations[1:]:
+            messages.append(process_pair(loc.code, base_loc.code))
+        return [base_loc.code], messages[-1]
+
+    base_obj = objs[0]
+    for obj in objs[1:]:
+        messages.append(process_pair(base_obj.code, obj.code))
+    keep = [base_obj.code] if isinstance(base_obj, (Container, Location)) else []
+    return keep, messages[-1] if messages else None
 
 
 @app.route('/registrations', methods=['GET', 'POST'])
