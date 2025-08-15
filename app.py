@@ -1613,6 +1613,7 @@ def scan(code):
                 else:
                     message = process_pair(last['code'], code)
                     session.pop('last_scan')
+                    handled = True
                     if isinstance(obj, Container) and isinstance(first_obj, Item):
                         session['batch_container'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
                     elif isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
