@@ -1093,106 +1093,26 @@ def scan(code):
 
     now = dt.datetime.utcnow()
     window = float(request.args.get('window', 5))
-    message = None
-    handled = False
+    force_process = window == 0
 
-    pending = session.get('pending_containers')
-    if pending:
-        last_time = dt.datetime.fromisoformat(pending['time'])
-        if (now - last_time).total_seconds() > pending.get('window', window):
-            process_pair(pending['first'], pending['second'])
-            session.pop('pending_containers')
-        else:
-            # Always treat the first scanned container as the child of the second
-            process_pair(pending['first'], pending['second'])
-            # Items scanned after a container-container pair should go into the second (parent) container
-            session['batch_container'] = {'code': pending['second'], 'time': now.isoformat(), 'window': window}
-            session.pop('pending_containers')
-            if isinstance(obj, (Item, Container)):
-                message = process_pair(code, pending['second'])
-                session['batch_container'] = {'code': pending['second'], 'time': now.isoformat(), 'window': window}
-                session.pop('last_scan', None)
-                handled = True
-            elif isinstance(obj, Location):
-                message = process_pair(pending['second'], code)
-                session.pop('batch_container', None)
-                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-                session.pop('last_scan', None)
-                handled = True
+    scans = session.get('scan_codes', [])
+    last_time = session.get('scan_time')
+    if last_time and not force_process:
+        last_dt = dt.datetime.fromisoformat(last_time)
+        if (now - last_dt).total_seconds() > window:
+            scans = []
 
-    if not handled:
-        batch_c = session.get('batch_container')
-        if batch_c:
-            last_time = dt.datetime.fromisoformat(batch_c['time'])
-            if (now - last_time).total_seconds() > batch_c.get('window', window):
-                session.pop('batch_container')
-                batch_c = None
-        if batch_c and isinstance(obj, (Item, Container)):
-            message = process_pair(code, batch_c['code'])
-            session['batch_container'] = {'code': batch_c['code'], 'time': now.isoformat(), 'window': window}
-            session.pop('last_scan', None)
-            handled = True
-        elif batch_c and isinstance(obj, Location):
-            message = process_pair(batch_c['code'], code)
-            session.pop('batch_container')
-            session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-            session.pop('last_scan', None)
-            handled = True
+    if code not in scans:
+        scans.append(code)
+    session['scan_time'] = now.isoformat()
 
-    if not handled:
-        batch = session.get('batch_location')
-        if batch:
-            last_time = dt.datetime.fromisoformat(batch['time'])
-            if (now - last_time).total_seconds() > batch.get('window', window):
-                session.pop('batch_location')
-                batch = None
-        if batch and isinstance(obj, (Item, Container)):
-            message = process_pair(code, batch['code'])
-            session['batch_location'] = {'code': batch['code'], 'time': now.isoformat(), 'window': window}
-            session.pop('last_scan', None)
-            handled = True
+    remaining, message = process_multiple(scans)
 
-    if not handled:
-        last = session.get('last_scan')
-        if last:
-            last_time = dt.datetime.fromisoformat(last['time'])
-            if ((now - last_time).total_seconds() <= last.get('window', window)
-                    and last['code'] != code):
-                first_obj = (Item.query.filter_by(code=last['code']).first() or
-                             Container.query.filter_by(code=last['code']).first() or
-                             Location.query.filter_by(code=last['code']).first())
-                if isinstance(first_obj, Container) and isinstance(obj, Item):
-                    message = process_pair(code, last['code'])
-                    session['batch_container'] = {'code': last['code'], 'time': now.isoformat(), 'window': window}
-                    session.pop('last_scan')
-                elif isinstance(first_obj, Container) and isinstance(obj, Container):
-                    session['pending_containers'] = {
-                        'first': last['code'],
-                        'second': code,
-                        'time': now.isoformat(),
-                        'window': window,
-                    }
-                    session.pop('last_scan')
-                else:
-                    message = process_pair(last['code'], code)
-                    session.pop('last_scan')
-                    handled = True
-                    if isinstance(obj, Container) and isinstance(first_obj, Item):
-                        session['batch_container'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                    elif isinstance(obj, Location) and isinstance(first_obj, (Item, Container)):
-                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                    elif isinstance(first_obj, Location) and isinstance(obj, (Item, Container)):
-                        session['batch_location'] = {'code': first_obj.code, 'time': now.isoformat(), 'window': window}
-                    elif isinstance(first_obj, Location) and isinstance(obj, Location):
-                        session['batch_location'] = {'code': obj.code, 'time': now.isoformat(), 'window': window}
-                    else:
-                        session.pop('batch_location', None)
-        else:
-            session['last_scan'] = {'code': code, 'time': now.isoformat(), 'window': window}
-            if isinstance(obj, Location):
-                session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
-            else:
-                session.pop('batch_location', None)
+    if force_process:
+        session.pop('scan_codes', None)
+        session.pop('scan_time', None)
+    else:
+        session['scan_codes'] = remaining
 
     if request.args.get('ajax'):
         name = getattr(obj, 'name', None)
@@ -1212,36 +1132,67 @@ def process_pair(first_code: str, second_code: str) -> str:
     second = (Item.query.filter_by(code=second_code).first() or
               Container.query.filter_by(code=second_code).first() or
               Location.query.filter_by(code=second_code).first())
+
+    # item-item -> no action
+    if isinstance(first, Item) and isinstance(second, Item):
+        return 'No action for scanned pair.'
+
+    # item-container or container-item -> item goes into container
     if isinstance(first, Item) and isinstance(second, Container):
-        first.container = second
-        first.location = None
-        first.updated_by = current_user()
+        child, parent = first, second
+    elif isinstance(first, Container) and isinstance(second, Item):
+        child, parent = second, first
+    else:
+        child = parent = None
+    if child and parent:
+        child.container = parent
+        child.location = None
+        child.updated_by = current_user()
         db.session.commit()
-        msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to container', item=first, container=second)
+        msg = f'Item <b>{child.name}</b> was moved to <b>{parent.name}</b>'
+        log_action('item to container', item=child, container=parent)
         return msg
+
+    # item-location or location-item -> item to location
     if isinstance(first, Item) and isinstance(second, Location):
-        first.location = second
-        first.container = None
-        first.updated_by = current_user()
+        itm, loc = first, second
+    elif isinstance(first, Location) and isinstance(second, Item):
+        itm, loc = second, first
+    else:
+        itm = loc = None
+    if itm and loc:
+        itm.location = loc
+        itm.container = None
+        itm.updated_by = current_user()
         db.session.commit()
-        msg = f'Item <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('item to location', item=first, location=second)
+        msg = f'Item <b>{itm.name}</b> was moved to <b>{loc.name}</b>'
+        log_action('item to location', item=itm, location=loc)
         return msg
+
+    # container-location or location-container -> container to location
     if isinstance(first, Container) and isinstance(second, Location):
-        first.location = second
-        first.updated_by = current_user()
+        cont, loc = first, second
+    elif isinstance(first, Location) and isinstance(second, Container):
+        cont, loc = second, first
+    else:
+        cont = loc = None
+    if cont and loc:
+        cont.location = loc
+        cont.parent = None
+        cont.updated_by = current_user()
         db.session.commit()
-        msg = f'Container <b>{first.name}</b> was moved to <b>{second.name}</b>'
-        log_action('container to location', container=first, location=second)
-        for it in first.items:
-            it.location = second
+        msg = f'Container <b>{cont.name}</b> was moved to <b>{loc.name}</b>'
+        log_action('container to location', container=cont, location=loc)
+        for it in cont.items:
+            it.location = loc
             it.updated_by = current_user()
-            db.session.add(History(item=it, location=second,
+            db.session.add(History(item=it, location=loc,
                                    user=current_user(), action='item to location',
-                                   description=f'Item <b>{it.name}</b> was moved to <b>{second.name}</b>'))
+                                   description=f'Item <b>{it.name}</b> was moved to <b>{loc.name}</b>'))
         db.session.commit()
         return msg
+
+    # container-container -> first container into second
     if isinstance(first, Container) and isinstance(second, Container):
         first.parent = second
         first.location = second.location
@@ -1254,29 +1205,8 @@ def process_pair(first_code: str, second_code: str) -> str:
                        f"was stored in <a href='{url_for('container_detail', code=second.code)}'><b>{second.name}</b></a>"
                    ))
         return msg
-    if isinstance(first, Location) and isinstance(second, Item):
-        second.location = first
-        second.container = None
-        second.updated_by = current_user()
-        db.session.commit()
-        msg = f'Item <b>{second.name}</b> was moved to <b>{first.name}</b>'
-        log_action('item to location', item=second, location=first)
-        return msg
-    if isinstance(first, Location) and isinstance(second, Container):
-        second.location = first
-        second.parent = None
-        second.updated_by = current_user()
-        db.session.commit()
-        msg = f'Container <b>{second.name}</b> was moved to <b>{first.name}</b>'
-        log_action('container to location', container=second, location=first)
-        for it in second.items:
-            it.location = first
-            it.updated_by = current_user()
-            db.session.add(History(item=it, location=first,
-                                   user=current_user(), action='item to location',
-                                   description=f'Item <b>{it.name}</b> was moved to <b>{first.name}</b>'))
-        db.session.commit()
-        return msg
+
+    # location-location -> first location becomes child of second
     if isinstance(first, Location) and isinstance(second, Location):
         first.parent = second
         first.updated_by = current_user()
@@ -1284,7 +1214,78 @@ def process_pair(first_code: str, second_code: str) -> str:
         msg = f'Location <b>{first.name}</b> was moved under <b>{second.name}</b>'
         log_action('edited location', location=first)
         return msg
+
     return 'No action for scanned pair.'
+
+
+def process_multiple(codes: list[str]) -> tuple[list[str], str | None]:
+    """Process a list of scanned codes according to the pairing rules.
+
+    Returns a tuple of (remaining_codes, message). remaining_codes contains
+    codes that should be kept for subsequent scans (e.g. a container or
+    location acting as the parent for further items). message is the last
+    action performed, if any.
+    """
+
+    objs = []
+    for c in codes:
+        obj = (Item.query.filter_by(code=c).first() or
+               Container.query.filter_by(code=c).first() or
+               Location.query.filter_by(code=c).first())
+        if obj:
+            objs.append(obj)
+
+    if len(objs) < 2:
+        return codes, None
+
+    items = [o for o in objs if isinstance(o, Item)]
+    containers = [o for o in objs if isinstance(o, Container)]
+    locations = [o for o in objs if isinstance(o, Location)]
+    messages: list[str] = []
+
+    # Exactly two codes - just process the pair and determine base
+    if len(objs) == 2:
+        msg = process_pair(codes[0], codes[1])
+        messages.append(msg)
+        base: list[str] = []
+        if ((isinstance(objs[0], Item) and isinstance(objs[1], Container)) or
+                (isinstance(objs[0], Container) and isinstance(objs[1], Item)) or
+                (isinstance(objs[0], Container) and isinstance(objs[1], Container))):
+            base_code = objs[0].code if isinstance(objs[0], Container) and isinstance(objs[1], Item) else objs[1].code
+            base = [base_code]
+        elif ((isinstance(objs[0], Item) and isinstance(objs[1], Location)) or
+              (isinstance(objs[0], Location) and isinstance(objs[1], Item)) or
+              (isinstance(objs[0], Container) and isinstance(objs[1], Location)) or
+              (isinstance(objs[0], Location) and isinstance(objs[1], Container)) or
+              (isinstance(objs[0], Location) and isinstance(objs[1], Location))):
+            base_code = objs[0].code if isinstance(objs[0], Location) and not isinstance(objs[1], Location) else objs[1].code
+            base = [base_code]
+        return base, messages[-1]
+
+    # More than two codes
+    if len(locations) == 1 and len(containers) + len(items) >= 1:
+        loc = locations[0]
+        for obj in [o for o in objs if o is not loc]:
+            messages.append(process_pair(obj.code, loc.code))
+        return [loc.code], messages[-1]
+
+    if len(containers) == 1 and len(locations) == 0:
+        cont = containers[0]
+        for obj in [o for o in objs if o is not cont]:
+            messages.append(process_pair(obj.code, cont.code))
+        return [cont.code], messages[-1]
+
+    if len(locations) >= 2 and len(containers) == 0 and len(items) == 0:
+        base_loc = locations[0]
+        for loc in locations[1:]:
+            messages.append(process_pair(loc.code, base_loc.code))
+        return [base_loc.code], messages[-1]
+
+    base_obj = objs[0]
+    for obj in objs[1:]:
+        messages.append(process_pair(base_obj.code, obj.code))
+    keep = [base_obj.code] if isinstance(base_obj, (Container, Location)) else []
+    return keep, messages[-1] if messages else None
 
 
 @app.route('/registrations', methods=['GET', 'POST'])
