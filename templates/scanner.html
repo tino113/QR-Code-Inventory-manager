@@ -124,8 +124,9 @@ function processNext(){
       addLog(`Scanned ${decodedText}${nameHtml}`);
       if(data.message){
         msg.innerHTML = data.message;
-        msg.classList.add('text-danger');
-        beep(880);
+        msg.classList.remove('text-danger');
+        // registration tone
+        beep(660);
         addLog(data.message);
         last = null;
         if(pendingTimeout){

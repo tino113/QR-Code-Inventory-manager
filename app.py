@@ -1540,16 +1540,18 @@ def scan(code):
             process_pair(pending['first'], pending['second'])
             session.pop('pending_containers')
         else:
-            process_pair(pending['second'], pending['first'])
-            session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
+            # Always treat the first scanned container as the child of the second
+            process_pair(pending['first'], pending['second'])
+            # Items scanned after a container-container pair should go into the second (parent) container
+            session['batch_container'] = {'code': pending['second'], 'time': now.isoformat(), 'window': window}
             session.pop('pending_containers')
             if isinstance(obj, (Item, Container)):
-                message = process_pair(code, pending['first'])
-                session['batch_container'] = {'code': pending['first'], 'time': now.isoformat(), 'window': window}
+                message = process_pair(code, pending['second'])
+                session['batch_container'] = {'code': pending['second'], 'time': now.isoformat(), 'window': window}
                 session.pop('last_scan', None)
                 handled = True
             elif isinstance(obj, Location):
-                message = process_pair(pending['first'], code)
+                message = process_pair(pending['second'], code)
                 session.pop('batch_container', None)
                 session['batch_location'] = {'code': code, 'time': now.isoformat(), 'window': window}
                 session.pop('last_scan', None)
