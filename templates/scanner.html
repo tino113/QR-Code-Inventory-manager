@@ -31,8 +31,12 @@ const scanLog = [];
 
 function addLog(text) {
   const time = new Date().toLocaleTimeString();
+  const li = document.createElement('li');
+  li.className = 'list-group-item';
+  li.innerHTML = `${time} - ${text}`;
+  logList.insertAdjacentElement('afterbegin', li);
   scanLog.push({ time, text });
-  logList.insertAdjacentHTML('afterbegin', `<li class="list-group-item">${time} - ${text}</li>`);
+  return li;
 }
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -115,13 +119,15 @@ function processNext(){
     return;
   }
   const decodedText = queue.shift();
+  const entry = addLog(`Scanned ${decodedText}`);
   beep();
   fetch(`/scan/${decodedText}?ajax=1&window=${windowSlider.value}`)
     .then(r=>r.json())
     .then(data=>{
       const msg = document.getElementById('scan-message');
-      const nameHtml = data.name ? ` - <b>${data.name}</b>` : '';
-      addLog(`Scanned ${decodedText}${nameHtml}`);
+      if(data.name){
+        entry.innerHTML += ` - <b>${data.name}</b>`;
+      }
       if(data.message){
         msg.innerHTML = data.message;
         msg.classList.remove('text-danger');
